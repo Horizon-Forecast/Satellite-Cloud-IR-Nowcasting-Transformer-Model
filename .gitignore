@@ -205,3 +205,27 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# ════════════════════════════════════════════════════════════════════
+# Project-specific exclusions (Horizon Forecast)
+# ════════════════════════════════════════════════════════════════════
+
+# Repo-root level
+.claude/
+Datasets/
+*.pdf
+
+# Phase B — data + training outputs (regenerated locally)
+Phase B/data/raw/
+Phase B/data/processed/
+Phase B/data/tmp_cache/
+Phase B/checkpoints/
+Phase B/viz_output/
+Phase B/eval_results/
+Phase B/wandb/
+
+# Phase B — author-marked private / non-shareable
+Phase B/Colab (ignore)/
+Phase B/Docs(NOT for upload)/
+Phase B/README.md
+Phase B/run_full.bat
