@@ -140,12 +140,29 @@ def build_dem(dem_dir: str, out_path: str) -> Dict:
 # Step 3 — Satellite TIF → .npy conversion
 # ══════════════════════════════════════════════════════════════════════════════
 def _tif_to_npy(tif_path: Path, h: int = 256, w: int = 256) -> np.ndarray:
+    """
+    Read a SEVIRI TIF and return a (C, H, W) float32 array.
+
+    Void sentinels (raw values < -999 from EUMETVIEW edge / scan-gap pixels)
+    are inpainted with the nearest valid pixel per channel via
+    distance_transform_edt. Plain zero-fill was avoided because it produces a
+    bimodal pixel distribution that inflates norm-stats std ~2-3x and gives
+    the encoder a fake "void plateau" to memorize.
+    """
     import rasterio
-    from scipy.ndimage import zoom
+    from scipy.ndimage import zoom, distance_transform_edt
 
     with rasterio.open(tif_path) as src:
         arr = src.read().astype(np.float32)
-    arr[arr < -999] = 0.0
+
+    for ch in range(arr.shape[0]):
+        plane = arr[ch]
+        mask  = plane < -999
+        if not mask.any() or mask.all():
+            continue
+        _, (ii, jj) = distance_transform_edt(mask, return_indices=True)
+        arr[ch] = plane[ii, jj]
+
     if arr.shape[1] != h or arr.shape[2] != w:
         arr = zoom(arr, (1, h / arr.shape[1], w / arr.shape[2]), order=1)
     return arr

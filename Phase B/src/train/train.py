@@ -829,7 +829,7 @@ def load_model_for_inference(
     Load trained checkpoint for local inference on RTX 3070.
 
     Memory budget at FP16:
-      Model weights:   ~30.6M params × 2 bytes ≈ 60 MB
+      Model weights:   ~30.1M params × 2 bytes ≈ 60 MB
       Input tensor B=1: (1, 12, 256, 256) @ FP16 = ~1.6 MB
       Activations B=1:  ~400-600 MB (no gradients)
       Total estimate:   ~700 MB — well within 8 GB VRAM

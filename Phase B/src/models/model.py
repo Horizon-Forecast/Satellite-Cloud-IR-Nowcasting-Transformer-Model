@@ -150,12 +150,19 @@ class PhysicsDriverHead(nn.Module):
             *[gSTABlock(latent_dim) for _ in range(n_blocks)]
         )
 
-        # Transposed conv upsample: 64×64 → 256×256
+        # Bilinear upsample + 3×3 conv: 64×64 → 256×256.
+        # Replaces ConvTranspose2d (kernel=4, stride=2) which produces
+        # checkerboard artifacts due to uneven kernel/stride overlap.
+        # Smooth interpolation + learned refinement = no aliasing.
         self.decoder = nn.Sequential(
-            nn.ConvTranspose2d(latent_dim, 128, 4, stride=2, padding=1, bias=False),  # →128
+            nn.Upsample(scale_factor=2, mode="bilinear", align_corners=False),
+            nn.Conv2d(latent_dim, 128, 3, padding=1, bias=False),                      # →128
             nn.GroupNorm(8, 128),
             nn.GELU(),
-            nn.ConvTranspose2d(128, 64, 4, stride=2, padding=1, bias=False),           # →256
+            nn.Upsample(scale_factor=2, mode="bilinear", align_corners=False),
+            nn.Conv2d(128, 64, 3, padding=1, bias=False),                              # →256
+            nn.GELU(),
+            nn.Conv2d(64, 64, 3, padding=1, bias=False),  # extra smoothing conv
             nn.GELU(),
             nn.Conv2d(64, 2, 1),  # wind + temp — no activation (regression output)
         )
@@ -289,12 +296,19 @@ class ManifestationHead(nn.Module):
             [_SpatialTransformerBlock(latent_dim, n_heads) for _ in range(n_xfmr)]
         )
 
-        # Upsample 64×64 → 256×256
+        # Bilinear upsample + 3×3 conv: 64×64 → 256×256.
+        # Replaces ConvTranspose2d to eliminate checkerboard artifacts.
+        # Extra final conv smooths any residual high-frequency aliasing
+        # before cloud + rain heads project to output channels.
         self.upsample = nn.Sequential(
-            nn.ConvTranspose2d(latent_dim, 128, 4, stride=2, padding=1, bias=False),
+            nn.Upsample(scale_factor=2, mode="bilinear", align_corners=False),
+            nn.Conv2d(latent_dim, 128, 3, padding=1, bias=False),
             nn.GroupNorm(8, 128),
             nn.GELU(),
-            nn.ConvTranspose2d(128, 64, 4, stride=2, padding=1, bias=False),
+            nn.Upsample(scale_factor=2, mode="bilinear", align_corners=False),
+            nn.Conv2d(128, 64, 3, padding=1, bias=False),
+            nn.GELU(),
+            nn.Conv2d(64, 64, 3, padding=1, bias=False),  # extra smoothing conv
             nn.GELU(),
         )
 
@@ -368,7 +382,7 @@ class HorizonForecastModel(nn.Module):
       predicts WHERE it goes (clouds/rain). Physical causality is enforced by
       architecture, not just loss functions.
 
-    Parameter count: ~30.6M params at default settings (in_channels=12,
+    Parameter count: ~30.1M params at default settings (in_channels=12,
     latent_dim=256, n_rain_bins=64). Verified at runtime via model.n_params.
     VRAM at BF16 B=16: ~60 MB weights + ~22 GB activations on A5000 (92% util).
     VRAM at FP16 B=1 inference: ~60 MB weights + ~0.5 GB activations → 3070-safe.

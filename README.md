@@ -91,7 +91,7 @@ Horizon Forecast/
     ├── requirements.txt
     └── src/
         ├── data/    (dataset.py, prep.py)
-        ├── models/  (model.py — 30.6M params, gSTA + transformer)
+        ├── models/  (model.py — 30.1M params, gSTA + transformer)
         ├── train/   (train.py — HorizonLoss, Trainer, FP16 inference loader)
         ├── eval/    (evaluate.py, baselines.py, inference.py)
         └── viz/     (visualize.py)

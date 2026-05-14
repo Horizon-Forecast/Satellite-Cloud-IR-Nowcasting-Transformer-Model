@@ -73,25 +73,44 @@ def _add_colorbar(
     cb.outline.set_edgecolor(_GRID)
 
 
-def _overlay_dem(ax: plt.Axes, dem: Optional[np.ndarray], alpha: float = 0.18) -> None:
-    """Overlay DEM terrain as faint hillshade — gives geographic context (Israel shape)."""
+def _overlay_dem(ax: plt.Axes, dem: Optional[np.ndarray], alpha: float = 0.35) -> None:
+    """Overlay DEM terrain hillshade — gives Israel geographic context."""
     if dem is None:
         return
-    ax.imshow(dem, cmap="gray", origin="upper", aspect="equal",
+    ax.imshow(dem, cmap="terrain", origin="upper", aspect="equal",
               alpha=alpha, zorder=2, interpolation="bilinear")
+
+
+def _draw_coastline(
+    ax: plt.Axes,
+    dem_raw: Optional[np.ndarray],
+    threshold: float = 1.0,
+    color:     str   = "#ffffff",
+    linewidth: float = 1.0,
+    alpha:     float = 0.85,
+) -> None:
+    """Draw Israel coastline as contour at sea-level. dem_raw in meters."""
+    if dem_raw is None:
+        return
+    ax.contour(
+        dem_raw, levels=[threshold], colors=color,
+        linewidths=linewidth, alpha=alpha, zorder=4,
+        origin="upper", antialiased=True,
+    )
 
 
 def _scatter_stations(
     ax: plt.Axes,
     station_pixels: Optional[List[Tuple[int, int]]],
+    size: int = 22,
 ) -> None:
-    """Overlay IMS station locations as red triangles."""
+    """Overlay IMS station locations as cyan triangles (visible on dark + light bg)."""
     if station_pixels and len(station_pixels) > 0:
         rows = [p[0] for p in station_pixels]
         cols = [p[1] for p in station_pixels]
         ax.scatter(
-            cols, rows, s=14, c="#ff4444", marker="^",
-            zorder=5, alpha=0.85, linewidths=0.3, edgecolors="white",
+            cols, rows, s=size, c="#00ffd0", marker="^",
+            zorder=6, alpha=0.95, linewidths=0.6, edgecolors="black",
         )
 
 
@@ -149,10 +168,12 @@ def visualize_forecast(
     gt_r    = (RAIN_BIN_MID[_prep(true_rain_cls).astype(int)]
                if true_rain_cls is not None else None)
 
-    # DEM overlay: normalise raw DEM to [0,1] for hillshade rendering
-    dem_np: Optional[np.ndarray] = None
+    # DEM overlay: keep raw for coastline contour, normalised for hillshade.
+    dem_np:  Optional[np.ndarray] = None
+    dem_raw: Optional[np.ndarray] = None
     if dem is not None:
         d = _prep(dem).astype(np.float32)
+        dem_raw = d
         d_min, d_max = d.min(), d.max()
         dem_np = (d - d_min) / (d_max - d_min + 1e-8)
 
@@ -194,7 +215,9 @@ def visualize_forecast(
         ax = fig.add_subplot(gs0[0, i])
         im = ax.imshow(frame, cmap=CMAP_CLOUD, vmin=vmin_ir, vmax=vmax_ir,
                        origin="upper", aspect="equal")
-        _overlay_dem(ax, dem_np, alpha=0.12)
+        _overlay_dem(ax, dem_np, alpha=0.22)
+        _draw_coastline(ax, dem_raw, color="#00d4ff", linewidth=0.9)
+        _scatter_stations(ax, station_pixels, size=10)
         _style_ax(ax, f"IR Satellite  {lbl}")
         if i == T_IN - 1:
             _add_colorbar(fig, im, ax, "BT (norm.)")
@@ -204,14 +227,16 @@ def visualize_forecast(
 
     ax_w = fig.add_subplot(gs1[0, 0])
     im_w = ax_w.imshow(w_np, cmap=CMAP_WIND, origin="upper", aspect="equal")
-    _overlay_dem(ax_w, dem_np, alpha=0.15)
+    _overlay_dem(ax_w, dem_np, alpha=0.20)
+    _draw_coastline(ax_w, dem_raw, color="#003355", linewidth=1.1)
     _style_ax(ax_w, "Stage 1  →  Wind Speed (m/s)")
     _scatter_stations(ax_w, station_pixels)
     _add_colorbar(fig, im_w, ax_w, "m/s")
 
     ax_t = fig.add_subplot(gs1[0, 1])
     im_t = ax_t.imshow(t_np, cmap=CMAP_TEMP, origin="upper", aspect="equal")
-    _overlay_dem(ax_t, dem_np, alpha=0.15)
+    _overlay_dem(ax_t, dem_np, alpha=0.20)
+    _draw_coastline(ax_t, dem_raw, color="#000033", linewidth=1.1)
     _style_ax(ax_t, "Stage 1  →  Surface Temperature (°C)")
     _scatter_stations(ax_t, station_pixels)
     _add_colorbar(fig, im_t, ax_t, "°C")
@@ -223,14 +248,17 @@ def visualize_forecast(
     ax_c = fig.add_subplot(gs2[0, 0])
     im_c = ax_c.imshow(c_np, cmap=CMAP_CLOUD, vmin=vmin_ir, vmax=vmax_ir,
                        origin="upper", aspect="equal")
-    _overlay_dem(ax_c, dem_np, alpha=0.12)
+    _overlay_dem(ax_c, dem_np, alpha=0.22)
+    _draw_coastline(ax_c, dem_raw, color="#00d4ff", linewidth=1.0)
+    _scatter_stations(ax_c, station_pixels, size=14)
     _style_ax(ax_c, "Stage 2  →  Cloud Structure  T+15 min")
     _add_colorbar(fig, im_c, ax_c, "BT (norm.)")
 
     ax_r = fig.add_subplot(gs2[0, 1])
     im_r = ax_r.imshow(r_np, cmap=CMAP_RAIN, vmin=0, vmax=rain_vmax,
                        origin="upper", aspect="equal")
-    _overlay_dem(ax_r, dem_np, alpha=0.20)
+    _overlay_dem(ax_r, dem_np, alpha=0.25)
+    _draw_coastline(ax_r, dem_raw, color="#000033", linewidth=1.1)
     _style_ax(ax_r, "Stage 2  →  Rain Intensity  T+15 min")
     _scatter_stations(ax_r, station_pixels)
     _add_colorbar(fig, im_r, ax_r, "mm/hr")
@@ -242,7 +270,9 @@ def visualize_forecast(
         ax_gc = fig.add_subplot(gs3[0, 0])
         im_gc = ax_gc.imshow(gt_c, cmap=CMAP_CLOUD, vmin=vmin_ir, vmax=vmax_ir,
                               origin="upper", aspect="equal")
-        _overlay_dem(ax_gc, dem_np, alpha=0.12)
+        _overlay_dem(ax_gc, dem_np, alpha=0.22)
+        _draw_coastline(ax_gc, dem_raw, color="#00d4ff", linewidth=1.0)
+        _scatter_stations(ax_gc, station_pixels, size=14)
         _style_ax(ax_gc, "Ground Truth  →  Satellite Cloud")
         _add_colorbar(fig, im_gc, ax_gc, "BT (norm.)")
 
@@ -250,7 +280,8 @@ def visualize_forecast(
             ax_gr = fig.add_subplot(gs3[0, 1])
             im_gr = ax_gr.imshow(gt_r, cmap=CMAP_RAIN, vmin=0, vmax=rain_vmax,
                                   origin="upper", aspect="equal")
-            _overlay_dem(ax_gr, dem_np, alpha=0.20)
+            _overlay_dem(ax_gr, dem_np, alpha=0.25)
+            _draw_coastline(ax_gr, dem_raw, color="#000033", linewidth=1.1)
             _style_ax(ax_gr, "Ground Truth  →  IMS Rain (Station Points)")
             _scatter_stations(ax_gr, station_pixels)
             _add_colorbar(fig, im_gr, ax_gr, "mm/hr")
@@ -296,10 +327,12 @@ def visualize_rollout(
                 transform=ax.transAxes)
         return fig
 
-    # DEM overlay
-    dem_np: Optional[np.ndarray] = None
+    # DEM overlay + coastline
+    dem_np:  Optional[np.ndarray] = None
+    dem_raw: Optional[np.ndarray] = None
     if dem is not None:
         d = _prep(dem).astype(np.float32)
+        dem_raw = d
         d_min, d_max = d.min(), d.max()
         dem_np = (d - d_min) / (d_max - d_min + 1e-8)
 
@@ -340,7 +373,9 @@ def visualize_rollout(
         ax = axes[i, 0]
         im = ax.imshow(pred_ir, cmap=CMAP_CLOUD, vmin=vmin_ir, vmax=vmax_ir,
                        origin="upper", aspect="equal")
-        _overlay_dem(ax, dem_np, alpha=0.12)
+        _overlay_dem(ax, dem_np, alpha=0.22)
+        _draw_coastline(ax, dem_raw, color="#00d4ff", linewidth=0.9)
+        _scatter_stations(ax, station_pixels, size=10)
         _style_ax(ax, f"T+{lead_min}min  Pred IR")
         for spine in ax.spines.values():
             spine.set_edgecolor(border_c)
@@ -350,14 +385,17 @@ def visualize_rollout(
         ax = axes[i, 1]
         ax.imshow(true_ir, cmap=CMAP_CLOUD, vmin=vmin_ir, vmax=vmax_ir,
                   origin="upper", aspect="equal")
-        _overlay_dem(ax, dem_np, alpha=0.12)
+        _overlay_dem(ax, dem_np, alpha=0.22)
+        _draw_coastline(ax, dem_raw, color="#00d4ff", linewidth=0.9)
+        _scatter_stations(ax, station_pixels, size=10)
         _style_ax(ax, f"T+{lead_min}min  Real IR")
 
         # [2] Predicted Rain
         ax = axes[i, 2]
         ax.imshow(pred_rain, cmap=CMAP_RAIN, vmin=0, vmax=rain_vmax,
                   origin="upper", aspect="equal")
-        _overlay_dem(ax, dem_np, alpha=0.20)
+        _overlay_dem(ax, dem_np, alpha=0.25)
+        _draw_coastline(ax, dem_raw, color="#000033", linewidth=1.0)
         _scatter_stations(ax, station_pixels)
         _style_ax(ax, f"T+{lead_min}min  Pred Rain")
         for spine in ax.spines.values():
@@ -368,7 +406,8 @@ def visualize_rollout(
         ax = axes[i, 3]
         ax.imshow(true_rain, cmap=CMAP_RAIN, vmin=0, vmax=rain_vmax,
                   origin="upper", aspect="equal")
-        _overlay_dem(ax, dem_np, alpha=0.20)
+        _overlay_dem(ax, dem_np, alpha=0.25)
+        _draw_coastline(ax, dem_raw, color="#000033", linewidth=1.0)
         _scatter_stations(ax, station_pixels)
         _style_ax(ax, f"T+{lead_min}min  Real Rain")
 

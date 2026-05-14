@@ -85,6 +85,11 @@ def main() -> int:
                         help="Run per-horizon eval every N epochs (also tracks "
                              "best_rollout.pt). 0 = disable. ~15-30 min per call. "
                              "Default 20: ~5 runs over 100 epochs.")
+    parser.add_argument("--resume-ckpt", default=None,
+                        help="Resume training from this checkpoint .pt file. "
+                             "Loads model weights and skips epochs already done. "
+                             "Optimizer state is NOT preserved (cosine LR is "
+                             "fast-forwarded to the right step).")
     args = parser.parse_args()
 
     if args.smoke:
@@ -168,6 +173,7 @@ def main() -> int:
         use_wandb            =args.wandb,
         wandb_project        =args.wandb_project,
         multihorizon_every   =0 if args.smoke else args.multihorizon_every,
+        resume_ckpt          =args.resume_ckpt,
     )
     trainer.train()
     logger.info("training complete")
