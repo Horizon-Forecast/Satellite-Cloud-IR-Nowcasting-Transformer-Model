@@ -12,6 +12,14 @@ from typing import Optional, Tuple
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import torch.utils.checkpoint as cp
+
+# Gradient checkpointing toggle. Set False to disable (single-step, smaller rollout).
+# When True, gSTA blocks + decoders recompute forward during backward, saving ~70%
+# activation memory at cost of ~30% training throughput. Required to fit rollout >= 4
+# on 24 GB A5000 with bf16. State-dict compatible with non-checkpointed weights —
+# pure forward-pass behavior change, no parameter rename.
+USE_GRAD_CKPT = True
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -112,13 +120,22 @@ class SimVPv2Encoder(nn.Module):
             nn.GELU(),
         )
 
-        self.blocks = nn.Sequential(
-            *[gSTABlock(latent_dim, dilation=dilation) for _ in range(n_blocks)]
+        # ModuleList (not Sequential) so forward can iterate + grad-checkpoint each
+        # block individually. State-dict keys identical to Sequential (numeric).
+        self.blocks = nn.ModuleList(
+            [gSTABlock(latent_dim, dilation=dilation) for _ in range(n_blocks)]
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """x: (B, 12, 256, 256) → Z: (B, 256, 64, 64)"""
-        return self.blocks(self.stem(x))
+        z = self.stem(x)
+        if USE_GRAD_CKPT and self.training:
+            for blk in self.blocks:
+                z = cp.checkpoint(blk, z, use_reentrant=False)
+        else:
+            for blk in self.blocks:
+                z = blk(z)
+        return z
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -146,8 +163,8 @@ class PhysicsDriverHead(nn.Module):
     def __init__(self, latent_dim: int = 256, n_blocks: int = 4):
         super().__init__()
 
-        self.refine = nn.Sequential(
-            *[gSTABlock(latent_dim) for _ in range(n_blocks)]
+        self.refine = nn.ModuleList(
+            [gSTABlock(latent_dim) for _ in range(n_blocks)]
         )
 
         # Bilinear upsample + 3×3 conv: 64×64 → 256×256.
@@ -169,7 +186,13 @@ class PhysicsDriverHead(nn.Module):
 
     def forward(self, z: torch.Tensor) -> torch.Tensor:
         """Z: (B, 256, 64, 64) → (B, 2, 256, 256)"""
-        return self.decoder(self.refine(z))
+        if USE_GRAD_CKPT and self.training:
+            for blk in self.refine:
+                z = cp.checkpoint(blk, z, use_reentrant=False)
+            return cp.checkpoint(self.decoder, z, use_reentrant=False)
+        for blk in self.refine:
+            z = blk(z)
+        return self.decoder(z)
 
 
 class MaskedMSELoss(nn.Module):
@@ -282,8 +305,8 @@ class ManifestationHead(nn.Module):
         )
 
         # Local spatial refinement via gSTA
-        self.spatial_refine = nn.Sequential(
-            *[gSTABlock(latent_dim) for _ in range(n_gsta)]
+        self.spatial_refine = nn.ModuleList(
+            [gSTABlock(latent_dim) for _ in range(n_gsta)]
         )
 
         # Patch embedding: 64×64 → 8×8 non-overlapping patches = 64 tokens
@@ -335,7 +358,12 @@ class ManifestationHead(nn.Module):
         # Cascade fusion: project drivers → concat → blend
         d     = self.driver_proj(drivers)                        # (B, 256, 64, 64)
         fused = self.fusion(torch.cat([z, d], dim=1))            # (B, 256, 64, 64)
-        fused = self.spatial_refine(fused)
+        if USE_GRAD_CKPT and self.training:
+            for blk in self.spatial_refine:
+                fused = cp.checkpoint(blk, fused, use_reentrant=False)
+        else:
+            for blk in self.spatial_refine:
+                fused = blk(fused)
 
         # Patch attention: global storm cluster context
         p      = self.patch_embed(fused)                         # (B, 256, 8, 8)
@@ -351,8 +379,11 @@ class ManifestationHead(nn.Module):
         p_up  = F.interpolate(p_out, size=(64, 64), mode="bilinear", align_corners=False)
         fused = fused + p_up
 
-        # Decode to full 256×256 resolution
-        feat    = self.upsample(fused)          # (B, 64, 256, 256)
+        # Decode to full 256×256 resolution (checkpointed — heaviest activation)
+        if USE_GRAD_CKPT and self.training:
+            feat = cp.checkpoint(self.upsample, fused, use_reentrant=False)
+        else:
+            feat = self.upsample(fused)         # (B, 64, 256, 256)
         y_cloud = self.cloud_head(feat)         # (B, 1, 256, 256)
         y_rain  = self.rain_head(feat)          # (B, 64, 256, 256)
         return y_cloud, y_rain

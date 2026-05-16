@@ -560,7 +560,7 @@ class Trainer:
             true_rain_cls  = batch["y_rain"][0, 0],   # step 0
             station_pixels = self.station_pixels,
             norm_stats     = self.norm_stats,
-            dem            = self.val_loader.dataset.dem,
+            dem            = self.val_loader.dataset.dem_raw,
             title_suffix   = f"| Epoch {epoch}",
             save_path      = str(save_path),
         )
@@ -638,7 +638,7 @@ class Trainer:
             steps_data     = steps_data,
             station_pixels = self.station_pixels,
             norm_stats     = self.norm_stats,
-            dem            = self.val_loader.dataset.dem,
+            dem            = self.val_loader.dataset.dem_raw,
             ssim_threshold = self.ssim_blur_threshold,
             title_suffix   = f"| Epoch {epoch}",
             save_path      = str(save_path),
@@ -797,9 +797,12 @@ class Trainer:
             f"epochs={self.max_epochs} | "
             f"effective_batch={self.grad_accum * self.train_loader.batch_size}"
         )
+        import gc
         for epoch in range(self.start_epoch, self.max_epochs + 1):
             train_avg = self._train_epoch(epoch)
+            gc.collect(); torch.cuda.empty_cache()    # release inter-phase cache
             val_avg   = self._val_epoch(epoch)
+            gc.collect(); torch.cuda.empty_cache()
             val_loss  = val_avg["total"]
             is_best   = val_loss < self.best_val
             lr        = self.scheduler.get_last_lr()[0]
@@ -810,11 +813,14 @@ class Trainer:
                 self._save(epoch, val_loss, is_best)
             if self.eval_every > 0 and (epoch % self.eval_every == 0 or is_best):
                 self._run_eval_metrics(epoch)
+                gc.collect(); torch.cuda.empty_cache()
             if self.multihorizon_every > 0 and (epoch % self.multihorizon_every == 0):
                 self._run_multihorizon_eval(epoch)
+                gc.collect(); torch.cuda.empty_cache()
             if epoch % self.viz_every == 0 or is_best:
                 self._viz_val_sample(epoch)
                 self._viz_rollout_sample(epoch)
+                gc.collect(); torch.cuda.empty_cache()
 
 
 # ══════════════════════════════════════════════════════════════════════════════

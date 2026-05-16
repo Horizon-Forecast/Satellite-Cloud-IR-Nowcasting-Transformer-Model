@@ -229,6 +229,7 @@ Phase B/Colab (ignore)/
 Phase B/Docs(NOT for upload)/
 Phase B/README.md
 Phase B/run_full.bat
+Phase B/sync_phone.bat
 
 # Phase B — one-time diagnostic / migration scripts (historical only)
 Phase B/check_raw_tiles.py
@@ -237,3 +238,5 @@ Phase B/inpaint_sat_voids.py
 Phase B/recompute_norm_no_voids.py
 Phase B/bench_io.py
 Phase B/preflight.py
+Phase B/subsample_train.py
+Phase B/download_srtm.py

@@ -90,6 +90,10 @@ def main() -> int:
                              "Loads model weights and skips epochs already done. "
                              "Optimizer state is NOT preserved (cosine LR is "
                              "fast-forwarded to the right step).")
+    parser.add_argument("--train-csv", default="data/processed/index_train.csv",
+                        help="Path to train index CSV. Pass index_train_subset.csv "
+                             "after running subsample_train.py to train on a smaller "
+                             "fraction (sprint-speed mode).")
     args = parser.parse_args()
 
     if args.smoke:
@@ -125,8 +129,9 @@ def main() -> int:
     logger.info(f"rain_weights: dry={rain_weights[0]:.3f}  "
                 f"rain_mean={rain_weights[1:].mean():.3f}")
 
+    logger.info(f"Train CSV: {args.train_csv}")
     train_loader, val_loader = get_dataloaders(
-        train_csv  ="data/processed/index_train.csv",
+        train_csv  =args.train_csv,
         val_csv    ="data/processed/index_val.csv",
         dem_path   ="data/processed/dem_256.npy",
         mask_path  ="data/processed/station_mask.pt",

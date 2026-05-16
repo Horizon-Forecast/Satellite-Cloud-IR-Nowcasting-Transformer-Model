@@ -19,6 +19,7 @@ import logging
 import random
 from pathlib import Path
 
+import numpy as np
 import torch
 
 logging.basicConfig(
@@ -91,11 +92,16 @@ def main() -> None:
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
+    # Load DEM for coastline + hillshade overlay (matches training viz)
+    dem_arr = np.load(processed / "dem_256.npy")
+    dem_tensor = torch.from_numpy(dem_arr).unsqueeze(0)
+
     for i, idx in enumerate(indices):
         sample = ds[idx]
-        x         = sample["x"].unsqueeze(0).to(args.device)
-        true_cloud = sample["y_cloud"]   # (1, H, W)
-        true_rain  = sample["y_rain"]    # (H, W)
+        x          = sample["x"].unsqueeze(0).to(args.device)
+        # Dataset is rollout-format: y_sat=(T,2,H,W), y_rain=(T,H,W). Use step 0.
+        true_cloud = sample["y_sat"][0, 0:1]   # (1, H, W) - IR ch, step 0
+        true_rain  = sample["y_rain"][0]       # (H, W)    - rain class, step 0
         timestamp  = ds.index.iloc[idx]["timestamp"]
 
         with torch.no_grad():
@@ -113,6 +119,7 @@ def main() -> None:
             true_rain_cls  = true_rain,
             station_pixels = station_pixels,
             norm_stats     = norm_stats,
+            dem            = dem_tensor,
             title_suffix   = f"| {timestamp}",
             save_path      = str(save_path),
         )

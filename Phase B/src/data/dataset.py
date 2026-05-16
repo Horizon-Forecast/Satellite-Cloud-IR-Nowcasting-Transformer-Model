@@ -137,7 +137,9 @@ def _rebase_index(index: pd.DataFrame, project_root: str) -> pd.DataFrame:
     old_prefix = sample[:pos]
     new_prefix = str(project_root).rstrip("/\\")
 
-    def _fix(p: str) -> str:
+    def _fix(p):
+        if not isinstance(p, str):
+            return p  # NaN / None — leave as-is, downstream loaders skip them
         return p.replace(old_prefix, new_prefix).replace("\\", "/")
 
     for col in path_cols:
@@ -190,8 +192,12 @@ class HorizonDataset(Dataset):
         self.norm    = norm_stats or {}
 
         # Load static assets once at init (not per __getitem__ — avoids I/O overhead)
-        dem_arr  = np.load(dem_path).astype(np.float32)
-        self.dem = torch.from_numpy(dem_arr).unsqueeze(0)  # (1, 256, 256)
+        dem_arr      = np.load(dem_path).astype(np.float32)
+        # dem_raw kept in meters for visualization (contour thresholds work
+        # in real elevation, not normalized z-scores). dem is the normalized
+        # version fed into the model as one of the 12 input channels.
+        self.dem_raw = torch.from_numpy(dem_arr).unsqueeze(0)  # (1, 256, 256) meters
+        self.dem     = self.dem_raw.clone()
         if "dem" in self.norm:
             mean, std = self.norm["dem"]
             self.dem = (self.dem - mean) / (std + 1e-8)

@@ -91,7 +91,15 @@ def _parse_hgt_name(stem: str) -> Tuple[int, int]:
 
 def build_dem(dem_dir: str, out_path: str) -> Dict:
     """
-    Mosaic SRTM3 .hgt tiles covering [29N-34N, 34E-36E], downsample to 256×256.
+    Mosaic SRTM .hgt tiles covering [LAT_MIN-LAT_MAX, LON_MIN-LON_MAX] from
+    GRID_BOUNDS, downsample to 256×256. Auto-detects SRTM1 (3601×3601, ~30m)
+    vs SRTM3 (1201×1201, ~90m) from first tile.
+
+    BUGFIX: previous version hardcoded STEP=1200 assuming SRTM3. With SRTM1
+    tiles (3601×3601) that truncated each tile to its top-left 1200×1200 =
+    only NW 11% of each tile used. Dead Sea + most landmarks were sampled
+    from wrong geographic region → DEM values garbage.
+
     Idempotent: skips if out_path exists.
     """
     from scipy.ndimage import zoom
@@ -105,7 +113,17 @@ def build_dem(dem_dir: str, out_path: str) -> Dict:
     dem_path = Path(dem_dir)
     LAT_MIN, LAT_MAX = int(GRID_BOUNDS["lat_min"]), int(GRID_BOUNDS["lat_max"])
     LON_MIN, LON_MAX = int(GRID_BOUNDS["lon_min"]), int(GRID_BOUNDS["lon_max"])
-    STEP   = 1200
+
+    # Auto-detect SRTM native resolution from first in-bounds tile.
+    # SRTM tiles overlap neighbors by 1 pixel → STEP = native_res - 1.
+    sample = next(iter(sorted(dem_path.glob("*.hgt"))), None)
+    if sample is None:
+        raise FileNotFoundError(f"No .hgt files in {dem_path}")
+    sample_data = np.fromfile(str(sample), dtype=">i2")
+    native_res  = int(round(sample_data.size ** 0.5))
+    STEP        = native_res - 1
+    logger.info(f"[2] SRTM native resolution: {native_res}x{native_res}  STEP={STEP}")
+
     N_LAT  = LAT_MAX - LAT_MIN
     N_LON  = LON_MAX - LON_MIN
     mosaic = np.zeros((N_LAT * STEP, N_LON * STEP), dtype=np.float32)
@@ -118,14 +136,32 @@ def build_dem(dem_dir: str, out_path: str) -> Dict:
             continue
         if not (LAT_MIN <= lat < LAT_MAX and LON_MIN <= lon < LON_MAX):
             continue
-        tile = _read_hgt(hgt_path)
+        tile = _read_hgt(hgt_path).copy()
+        if tile.shape[0] != native_res:
+            logger.warning(f"[2] {hgt_path.name} resolution mismatch "
+                           f"({tile.shape[0]} vs expected {native_res}) — skip")
+            continue
+        # Per-tile inpaint: replace void sentinels with nearest valid pixel.
+        # SRTM voids use -32768 standard but some products encode at -1000 / -999.
+        # Inpaint catches all of them before mosaic placement (avoids leaks at
+        # tile boundaries when zoom interpolates across void/valid edges).
+        tile_voids = tile <= -500  # generous threshold — real Israel min ~-430m (Dead Sea)
+        if tile_voids.any() and not tile_voids.all():
+            from scipy.ndimage import distance_transform_edt
+            _, (ii, jj) = distance_transform_edt(tile_voids, return_indices=True)
+            tile = tile[ii, jj]
         row_start = (LAT_MAX - 1 - lat) * STEP
         col_start = (lon - LON_MIN) * STEP
         mosaic[row_start:row_start + STEP, col_start:col_start + STEP] = tile[:STEP, :STEP]
         loaded += 1
 
-    mosaic[mosaic < -1000] = 0.0  # void fill
+    # Safety net at mosaic level for any residual <=-500m pixels (shouldn't trigger
+    # after per-tile inpaint, but guards against bugs).
+    mosaic[mosaic <= -500] = 0.0
     dem_256 = zoom(mosaic, (256 / mosaic.shape[0], 256 / mosaic.shape[1]), order=1)
+    # Final clamp: even after inpaint+zoom, real Israel DEM min is Dead Sea at -430m.
+    # Anything more negative is interpolation/void artifact → clamp.
+    dem_256 = np.clip(dem_256, -450.0, None)
 
     out.parent.mkdir(parents=True, exist_ok=True)
     np.save(str(out), dem_256)

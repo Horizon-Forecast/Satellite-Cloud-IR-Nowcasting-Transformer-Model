@@ -73,28 +73,48 @@ def _add_colorbar(
     cb.outline.set_edgecolor(_GRID)
 
 
-def _overlay_dem(ax: plt.Axes, dem: Optional[np.ndarray], alpha: float = 0.35) -> None:
-    """Overlay DEM terrain hillshade — gives Israel geographic context."""
+def _overlay_dem(ax: plt.Axes, dem: Optional[np.ndarray], alpha: float = 0.15) -> None:
+    """Subtle grayscale DEM hillshade for elevation context.
+    Switched from 'terrain' colormap (saturated rainbow) to 'gray' so it does
+    NOT compete with the data colormaps on top. Low alpha keeps it as a
+    background hint, not a foreground feature."""
     if dem is None:
         return
-    ax.imshow(dem, cmap="terrain", origin="upper", aspect="equal",
+    ax.imshow(dem, cmap="gray", origin="upper", aspect=2.5,
               alpha=alpha, zorder=2, interpolation="bilinear")
 
 
 def _draw_coastline(
     ax: plt.Axes,
     dem_raw: Optional[np.ndarray],
-    threshold: float = 1.0,
-    color:     str   = "#ffffff",
-    linewidth: float = 1.0,
-    alpha:     float = 0.85,
+    threshold: float = 0.0,
+    color:     str   = "#ffeb3b",
+    linewidth: float = 1.5,
+    alpha:     float = 0.9,
 ) -> None:
-    """Draw Israel coastline as contour at sea-level. dem_raw in meters."""
+    """Mediterranean coast + Dead Sea rift boundary at 0m DEM elevation.
+
+    NOTE: this is NOT a political border — it's an elevation contour. The line
+    appears at MULTIPLE places where DEM crosses 0m:
+      1. Mediterranean coast (sharp -450m sea / +50m land transition)
+      2. Western + eastern walls of Jordan Rift Valley (land descending below 0m)
+      3. Gulf of Aqaba near Eilat
+    All are geographically real. The "extra" loops in middle-right are the rift
+    boundary, not coastline misalignment.
+
+    Previously drew a dashed -200m contour for Dead Sea — removed because the
+    sharp sea/land gradient at the Mediterranean produces a spurious -200m line
+    just offshore that looks like a 'westward bulge into the sea'."""
     if dem_raw is None:
         return
+    # matplotlib `contour(origin='upper')` does NOT align with `imshow(origin='upper')`
+    # when aspect != 1.0 — empirically verified north-south flip. Vertical flip the
+    # DEM array before contour to match imshow's actual rendered orientation.
+    # Tested against IR satellite cloud/sea boundary at multiple lat lines.
+    dem_flipped = dem_raw[::-1, :]
     ax.contour(
-        dem_raw, levels=[threshold], colors=color,
-        linewidths=linewidth, alpha=alpha, zorder=4,
+        dem_flipped, levels=[threshold], colors=color,
+        linewidths=linewidth, alpha=alpha, zorder=5,
         origin="upper", antialiased=True,
     )
 
@@ -187,7 +207,9 @@ def visualize_forecast(
     has_gt = gt_c is not None
     n_rows = 3 + int(has_gt)
 
-    fig = plt.figure(figsize=(22, 5.5 * n_rows), facecolor=_BG)
+    # Per-row height tuned for aspect=2.5 panels (real Israel geographic aspect):
+    # tall-narrow panels need ~13 height per row to render without squishing.
+    fig = plt.figure(figsize=(22, 12.5 * n_rows), facecolor=_BG)
 
     row_h = 1.0 / n_rows   # fractional height per row
     pad   = 0.012
@@ -214,9 +236,9 @@ def visualize_forecast(
     for i, (frame, lbl) in enumerate(zip(ir_frames, t_labels)):
         ax = fig.add_subplot(gs0[0, i])
         im = ax.imshow(frame, cmap=CMAP_CLOUD, vmin=vmin_ir, vmax=vmax_ir,
-                       origin="upper", aspect="equal")
+                       origin="upper", aspect=2.5)
         _overlay_dem(ax, dem_np, alpha=0.22)
-        _draw_coastline(ax, dem_raw, color="#00d4ff", linewidth=0.9)
+        _draw_coastline(ax, dem_raw)
         _scatter_stations(ax, station_pixels, size=10)
         _style_ax(ax, f"IR Satellite  {lbl}")
         if i == T_IN - 1:
@@ -226,17 +248,17 @@ def visualize_forecast(
     gs1  = _make_gs(1, 2)
 
     ax_w = fig.add_subplot(gs1[0, 0])
-    im_w = ax_w.imshow(w_np, cmap=CMAP_WIND, origin="upper", aspect="equal")
+    im_w = ax_w.imshow(w_np, cmap=CMAP_WIND, origin="upper", aspect=2.5)
     _overlay_dem(ax_w, dem_np, alpha=0.20)
-    _draw_coastline(ax_w, dem_raw, color="#003355", linewidth=1.1)
+    _draw_coastline(ax_w, dem_raw)
     _style_ax(ax_w, "Stage 1  →  Wind Speed (m/s)")
     _scatter_stations(ax_w, station_pixels)
     _add_colorbar(fig, im_w, ax_w, "m/s")
 
     ax_t = fig.add_subplot(gs1[0, 1])
-    im_t = ax_t.imshow(t_np, cmap=CMAP_TEMP, origin="upper", aspect="equal")
+    im_t = ax_t.imshow(t_np, cmap=CMAP_TEMP, origin="upper", aspect=2.5)
     _overlay_dem(ax_t, dem_np, alpha=0.20)
-    _draw_coastline(ax_t, dem_raw, color="#000033", linewidth=1.1)
+    _draw_coastline(ax_t, dem_raw)
     _style_ax(ax_t, "Stage 1  →  Surface Temperature (°C)")
     _scatter_stations(ax_t, station_pixels)
     _add_colorbar(fig, im_t, ax_t, "°C")
@@ -247,18 +269,18 @@ def visualize_forecast(
 
     ax_c = fig.add_subplot(gs2[0, 0])
     im_c = ax_c.imshow(c_np, cmap=CMAP_CLOUD, vmin=vmin_ir, vmax=vmax_ir,
-                       origin="upper", aspect="equal")
+                       origin="upper", aspect=2.5)
     _overlay_dem(ax_c, dem_np, alpha=0.22)
-    _draw_coastline(ax_c, dem_raw, color="#00d4ff", linewidth=1.0)
+    _draw_coastline(ax_c, dem_raw)
     _scatter_stations(ax_c, station_pixels, size=14)
     _style_ax(ax_c, "Stage 2  →  Cloud Structure  T+15 min")
     _add_colorbar(fig, im_c, ax_c, "BT (norm.)")
 
     ax_r = fig.add_subplot(gs2[0, 1])
     im_r = ax_r.imshow(r_np, cmap=CMAP_RAIN, vmin=0, vmax=rain_vmax,
-                       origin="upper", aspect="equal")
+                       origin="upper", aspect=2.5)
     _overlay_dem(ax_r, dem_np, alpha=0.25)
-    _draw_coastline(ax_r, dem_raw, color="#000033", linewidth=1.1)
+    _draw_coastline(ax_r, dem_raw)
     _style_ax(ax_r, "Stage 2  →  Rain Intensity  T+15 min")
     _scatter_stations(ax_r, station_pixels)
     _add_colorbar(fig, im_r, ax_r, "mm/hr")
@@ -269,9 +291,9 @@ def visualize_forecast(
 
         ax_gc = fig.add_subplot(gs3[0, 0])
         im_gc = ax_gc.imshow(gt_c, cmap=CMAP_CLOUD, vmin=vmin_ir, vmax=vmax_ir,
-                              origin="upper", aspect="equal")
+                              origin="upper", aspect=2.5)
         _overlay_dem(ax_gc, dem_np, alpha=0.22)
-        _draw_coastline(ax_gc, dem_raw, color="#00d4ff", linewidth=1.0)
+        _draw_coastline(ax_gc, dem_raw)
         _scatter_stations(ax_gc, station_pixels, size=14)
         _style_ax(ax_gc, "Ground Truth  →  Satellite Cloud")
         _add_colorbar(fig, im_gc, ax_gc, "BT (norm.)")
@@ -279,9 +301,9 @@ def visualize_forecast(
         if gt_r is not None:
             ax_gr = fig.add_subplot(gs3[0, 1])
             im_gr = ax_gr.imshow(gt_r, cmap=CMAP_RAIN, vmin=0, vmax=rain_vmax,
-                                  origin="upper", aspect="equal")
+                                  origin="upper", aspect=2.5)
             _overlay_dem(ax_gr, dem_np, alpha=0.25)
-            _draw_coastline(ax_gr, dem_raw, color="#000033", linewidth=1.1)
+            _draw_coastline(ax_gr, dem_raw)
             _style_ax(ax_gr, "Ground Truth  →  IMS Rain (Station Points)")
             _scatter_stations(ax_gr, station_pixels)
             _add_colorbar(fig, im_gr, ax_gr, "mm/hr")
@@ -295,7 +317,7 @@ def visualize_forecast(
     if save_path:
         Path(save_path).parent.mkdir(parents=True, exist_ok=True)
         fig.savefig(save_path, dpi=150, bbox_inches="tight", facecolor=_BG)
-        print(f"Saved visualization → {save_path}")
+        print(f"Saved visualization -> {save_path}")
 
     return fig
 
@@ -341,7 +363,7 @@ def visualize_rollout(
 
     fig, axes = plt.subplots(
         n_rows, n_cols,
-        figsize=(n_cols * 4.5, n_rows * 3.5),
+        figsize=(n_cols * 4.5, n_rows * 8.0),  # tall panels for aspect=2.5
         facecolor=_BG,
         gridspec_kw={"width_ratios": [1, 1, 1, 1, 0.35], "wspace": 0.05, "hspace": 0.25},
     )
@@ -372,9 +394,9 @@ def visualize_rollout(
         # [0] Predicted IR
         ax = axes[i, 0]
         im = ax.imshow(pred_ir, cmap=CMAP_CLOUD, vmin=vmin_ir, vmax=vmax_ir,
-                       origin="upper", aspect="equal")
+                       origin="upper", aspect=2.5)
         _overlay_dem(ax, dem_np, alpha=0.22)
-        _draw_coastline(ax, dem_raw, color="#00d4ff", linewidth=0.9)
+        _draw_coastline(ax, dem_raw)
         _scatter_stations(ax, station_pixels, size=10)
         _style_ax(ax, f"T+{lead_min}min  Pred IR")
         for spine in ax.spines.values():
@@ -384,18 +406,18 @@ def visualize_rollout(
         # [1] Real IR
         ax = axes[i, 1]
         ax.imshow(true_ir, cmap=CMAP_CLOUD, vmin=vmin_ir, vmax=vmax_ir,
-                  origin="upper", aspect="equal")
+                  origin="upper", aspect=2.5)
         _overlay_dem(ax, dem_np, alpha=0.22)
-        _draw_coastline(ax, dem_raw, color="#00d4ff", linewidth=0.9)
+        _draw_coastline(ax, dem_raw)
         _scatter_stations(ax, station_pixels, size=10)
         _style_ax(ax, f"T+{lead_min}min  Real IR")
 
         # [2] Predicted Rain
         ax = axes[i, 2]
         ax.imshow(pred_rain, cmap=CMAP_RAIN, vmin=0, vmax=rain_vmax,
-                  origin="upper", aspect="equal")
+                  origin="upper", aspect=2.5)
         _overlay_dem(ax, dem_np, alpha=0.25)
-        _draw_coastline(ax, dem_raw, color="#000033", linewidth=1.0)
+        _draw_coastline(ax, dem_raw)
         _scatter_stations(ax, station_pixels)
         _style_ax(ax, f"T+{lead_min}min  Pred Rain")
         for spine in ax.spines.values():
@@ -405,9 +427,9 @@ def visualize_rollout(
         # [3] Real Rain
         ax = axes[i, 3]
         ax.imshow(true_rain, cmap=CMAP_RAIN, vmin=0, vmax=rain_vmax,
-                  origin="upper", aspect="equal")
+                  origin="upper", aspect=2.5)
         _overlay_dem(ax, dem_np, alpha=0.25)
-        _draw_coastline(ax, dem_raw, color="#000033", linewidth=1.0)
+        _draw_coastline(ax, dem_raw)
         _scatter_stations(ax, station_pixels)
         _style_ax(ax, f"T+{lead_min}min  Real Rain")
 
@@ -440,6 +462,6 @@ def visualize_rollout(
     if save_path:
         Path(save_path).parent.mkdir(parents=True, exist_ok=True)
         fig.savefig(save_path, dpi=130, bbox_inches="tight", facecolor=_BG)
-        print(f"Saved rollout visualization → {save_path}")
+        print(f"Saved rollout visualization -> {save_path}")
 
     return fig
