@@ -8,7 +8,7 @@ WORKSPACE=/workspace
 
 echo "=== 1. Clone code ==="
 cd $WORKSPACE
-git clone https://github.com/YOUR_USERNAME/YOUR_REPO_NAME.git project
+git clone https://github.com/Horizon-Forecast/Satellite-Cloud-IR-Nowcasting-Transformer-Model.git project
 cd project
 
 echo "=== 2. Install dependencies ==="
@@ -43,4 +43,8 @@ if torch.cuda.is_available():
 
 echo "=== Setup complete ==="
 echo "Launch training with:"
+echo "# H4b (ablation + ERA5):"
 echo "python entry_point.py --device-id 0 --precision bf16 --batch-size 12 --grad-accum 3 --max-epochs 30 --num-workers 4 --rollout-max 2 --multihorizon-every 10 --train-csv data/processed/index_train_subset.csv --wandb --wandb-project horizon-forecast --era5-path data/era5_npy --no-cascade"
+echo ""
+echo "# H4 (cascade + ERA5):"
+echo "python entry_point.py --device-id 0 --precision bf16 --batch-size 12 --grad-accum 3 --max-epochs 30 --num-workers 4 --rollout-max 2 --multihorizon-every 10 --train-csv data/processed/index_train_subset.csv --wandb --wandb-project horizon-forecast --era5-path data/era5_npy"
