@@ -113,7 +113,9 @@ def compute_rain_class_weights(
         counts[c] += 1
 
     weights = 1.0 / np.sqrt(counts)
-    weights[1:] *= 10.0       # penalize missing storm events heavily (False Negatives)
+    weights[1:] *= 5.0        # was 10.0; reduced after ep 10 multihorizon eval revealed
+                              # POD=0.99 + FAR=0.94 — model over-predicts rain due to
+                              # too-aggressive class weighting. 5x is moderate.
     weights /= weights.mean() # normalize: mean weight = 1
     return torch.tensor(weights, dtype=torch.float32)
 
@@ -158,9 +160,11 @@ class HorizonDataset(Dataset):
     Target tensors (multi-step rollout, T_ROLLOUT=16 steps = 4h):
       y_sat       : (T_ROLLOUT, 2, H, W) float32  IR+WV future frames (Option A — both channels
                     predicted so model can feed its own output back as input)
-      y_thermo    : (T_ROLLOUT, 2, H, W) float32  wind+temp at station pixels per step
-      station_mask: (H, W) bool    True at active IMS station pixels (same for all steps)
-      y_rain      : (T_ROLLOUT, H, W) int64  rain class [0-63] per step
+      y_thermo    : (T_ROLLOUT, 2, H, W) float32  wind+temp per step.
+                    If era5_npy_dir provided: dense 256×256 ERA5 grid (full supervision).
+                    Otherwise: sparse IMS station pixels only (legacy mode).
+      station_mask: (H, W) bool    True at active IMS station pixels (used for rain loss)
+      y_rain      : (T_ROLLOUT, H, W) int64  rain class [0-63] per step (IMS stations only)
       valid_steps : scalar int32   number of consecutive future steps with data (1..T_ROLLOUT)
 
     index_csv required columns (new rollout format):
@@ -171,6 +175,11 @@ class HorizonDataset(Dataset):
 
     Legacy single-step format (sat_target_path / ims_target_path) is still accepted;
     valid_steps defaults to 1 in that case.
+
+    ERA5 mode (era5_npy_dir set):
+        y_thermo loaded from data/era5_npy/YYYYMM/YYYYMMDD_HHMM.npy (2,256,256)
+        Full dense grid supervision — replaces sparse IMS wind+temp.
+        Rain supervision still from IMS stations (ERA5 has no precipitation).
 
     Data split (chronological — no data leakage):
         Train: 2020-2023  |  Val: 2024 Jan-Jun  |  Test: 2024 Jul-2025 Dec
@@ -184,6 +193,7 @@ class HorizonDataset(Dataset):
         norm_stats: Optional[Dict] = None,
         augment: bool = False,
         project_root: Optional[str] = None,
+        era5_npy_dir: Optional[str] = None,   # ERA5 dense thermo supervision
     ):
         self.index = pd.read_csv(index_csv, parse_dates=["timestamp"])
         if project_root is not None:
@@ -207,6 +217,11 @@ class HorizonDataset(Dataset):
         self.station_pixels = mask_data["pixels"]   # [(r, c, sid), ...]
         self._sid_to_pixel  = {sid: (r, c) for r, c, sid in self.station_pixels}
 
+        # ERA5 dense supervision (optional)
+        self.era5_npy_dir = Path(self._resolve_path(era5_npy_dir)) if era5_npy_dir else None
+        if self.era5_npy_dir:
+            logger.info(f"ERA5 dense thermo supervision: {self.era5_npy_dir}")
+
     def __len__(self) -> int:
         return len(self.index)
 
@@ -216,8 +231,19 @@ class HorizonDataset(Dataset):
             return (t - mean) / (std + 1e-8)
         return t
 
+    @staticmethod
+    def _resolve_path(path: str) -> str:
+        """Translate Windows absolute paths (C:\\...) to WSL /mnt/c/... if running on Linux."""
+        import platform
+        if platform.system() == "Linux" and len(path) >= 3 and path[1] == ":" and path[2] in "\\/":
+            drive = path[0].lower()
+            rest = path[3:].replace("\\", "/")
+            return f"/mnt/{drive}/{rest}"
+        return path
+
     def _load_sat(self, path: str) -> torch.Tensor:
         """Load one SEVIRI frame → (2, H, W): channel 0=IR, channel 1=WV."""
+        path = self._resolve_path(path)
         arr = np.load(path).astype(np.float32)  # (2, 256, 256)
         ir  = self._norm(torch.from_numpy(arr[0:1]), "ir")
         wv  = self._norm(torch.from_numpy(arr[1:2]), "wv")
@@ -233,6 +259,7 @@ class HorizonDataset(Dataset):
         y_rain:   (256, 256) int64 — rain class [0-63] at station pixels, 0 elsewhere.
                   CE loss also computed only at station pixels.
         """
+        path = self._resolve_path(path)
         df = pd.read_csv(path)
         y_thermo = torch.zeros(2, GRID_H, GRID_W, dtype=torch.float32)
         y_rain   = torch.zeros(GRID_H, GRID_W, dtype=torch.int64)
@@ -260,6 +287,32 @@ class HorizonDataset(Dataset):
 
         return y_thermo, y_rain
 
+    def _load_era5(self, timestamp: pd.Timestamp) -> Optional[torch.Tensor]:
+        """
+        Load ERA5 dense wind+temp grid for a given timestamp.
+        Returns (2, 256, 256) float32 tensor normalized with norm_stats,
+        or None if file missing (falls back to sparse IMS).
+
+        File path: era5_npy/YYYYMM/YYYYMMDD_HHMM.npy
+        """
+        if self.era5_npy_dir is None:
+            return None
+        yyyymm = timestamp.strftime("%Y%m")
+        fname  = timestamp.strftime("%Y%m%d_%H%M") + ".npy"
+        path   = self.era5_npy_dir / yyyymm / fname
+        if not path.exists():
+            return None  # missing file — caller falls back to IMS sparse
+        arr = np.load(str(path)).astype(np.float32)  # (2, 256, 256)
+        wind = torch.from_numpy(arr[0:1])  # (1, 256, 256) m/s
+        temp = torch.from_numpy(arr[1:2])  # (1, 256, 256) °C
+        if "wind" in self.norm:
+            mean, std = self.norm["wind"]
+            wind = (wind - mean) / (std + 1e-8)
+        if "temp" in self.norm:
+            mean, std = self.norm["temp"]
+            temp = (temp - mean) / (std + 1e-8)
+        return torch.cat([wind, temp], dim=0)  # (2, 256, 256)
+
     def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:
         row = self.index.iloc[idx]
 
@@ -271,22 +324,31 @@ class HorizonDataset(Dataset):
         x = torch.cat(frames, dim=0)  # (12, 256, 256)
 
         # Multi-step targets: allocate full T_ROLLOUT tensors (zeros = padding)
-        y_sat    = torch.zeros(T_ROLLOUT, 2, GRID_H, GRID_W, dtype=torch.float32)
-        y_thermo = torch.zeros(T_ROLLOUT, 2, GRID_H, GRID_W, dtype=torch.float32)
-        y_rain   = torch.zeros(T_ROLLOUT, GRID_H, GRID_W, dtype=torch.int64)
+        y_sat        = torch.zeros(T_ROLLOUT, 2, GRID_H, GRID_W, dtype=torch.float32)
+        y_thermo     = torch.zeros(T_ROLLOUT, 2, GRID_H, GRID_W, dtype=torch.float32)
+        y_thermo_ims = torch.zeros(T_ROLLOUT, 2, GRID_H, GRID_W, dtype=torch.float32)  # IMS sparse always
+        y_rain       = torch.zeros(T_ROLLOUT, GRID_H, GRID_W, dtype=torch.int64)
 
         # Detect index format: new rollout (sat_target_path_t1) vs legacy (sat_target_path)
         if "sat_target_path_t1" in row.index:
             valid_steps = int(row.get("valid_steps", 1))
+            base_ts = pd.Timestamp(row["timestamp"])
             for step in range(valid_steps):
                 col_sat = f"sat_target_path_t{step + 1}"
                 col_ims = f"ims_target_path_t{step + 1}"
                 if col_sat in row.index and pd.notna(row[col_sat]):
                     y_sat[step] = self._load_sat(str(row[col_sat]))
                 if col_ims in row.index and pd.notna(row[col_ims]):
-                    th, r = self._load_ims(str(row[col_ims]))
-                    y_thermo[step] = th
-                    y_rain[step]   = r
+                    th_ims, r = self._load_ims(str(row[col_ims]))
+                    y_rain[step]       = r
+                    y_thermo_ims[step] = th_ims  # always keep IMS for monitoring
+                    # ERA5 dense thermo (if available) else fall back to IMS sparse
+                    step_ts  = base_ts + pd.Timedelta(minutes=15 * (step + 1))
+                    era5_th  = self._load_era5(step_ts)
+                    if era5_th is not None:
+                        y_thermo[step] = era5_th
+                    else:
+                        y_thermo[step] = th_ims
         else:
             # Legacy single-step format — compatible with pre-rollout index CSVs
             valid_steps = 1
@@ -299,19 +361,22 @@ class HorizonDataset(Dataset):
 
         # Augmentation: horizontal flip only (preserves N-S lat gradient)
         if self.augment and torch.rand(1).item() > 0.5:
-            x        = torch.flip(x,        dims=[-1])
-            y_sat    = torch.flip(y_sat,    dims=[-1])
-            y_thermo = torch.flip(y_thermo, dims=[-1])
-            y_rain   = torch.flip(y_rain,   dims=[-1])
-            mask     = torch.flip(mask,     dims=[-1])
+            x            = torch.flip(x,            dims=[-1])
+            y_sat        = torch.flip(y_sat,        dims=[-1])
+            y_thermo     = torch.flip(y_thermo,     dims=[-1])
+            y_thermo_ims = torch.flip(y_thermo_ims, dims=[-1])
+            y_rain       = torch.flip(y_rain,       dims=[-1])
+            mask         = torch.flip(mask,         dims=[-1])
 
         return {
-            "x":            x,           # (12, 256, 256) float32
-            "y_sat":        y_sat,       # (T_ROLLOUT, 2, 256, 256) float32  IR+WV per step
-            "y_thermo":     y_thermo,    # (T_ROLLOUT, 2, 256, 256) float32  wind+temp per step
-            "station_mask": mask,        # (256, 256) bool
-            "y_rain":       y_rain,      # (T_ROLLOUT, 256, 256) int64
+            "x":            x,             # (12, 256, 256) float32
+            "y_sat":        y_sat,         # (T_ROLLOUT, 2, 256, 256) float32  IR+WV per step
+            "y_thermo":     y_thermo,      # (T_ROLLOUT, 2, 256, 256) float32  ERA5 or IMS wind+temp
+            "y_thermo_ims": y_thermo_ims,  # (T_ROLLOUT, 2, 256, 256) float32  IMS sparse always (monitoring)
+            "station_mask": mask,          # (256, 256) bool
+            "y_rain":       y_rain,        # (T_ROLLOUT, 256, 256) int64
             "valid_steps":  torch.tensor(valid_steps, dtype=torch.int32),
+            "era5_dense":   self.era5_npy_dir is not None,  # True = dense ERA5 thermo supervision
         }
 
 
@@ -325,6 +390,7 @@ def get_dataloaders(
     batch_size:   int = 16,
     num_workers:  int = 8,
     project_root: Optional[str] = None,
+    era5_npy_dir: Optional[str] = None,
 ) -> Tuple[DataLoader, DataLoader]:
     """
     H100-optimized DataLoader configuration:
@@ -333,8 +399,8 @@ def get_dataloaders(
       prefetch_factor=4        → 4 batches pre-loaded while GPU trains
       drop_last=True           → stable GroupNorm statistics (no single-sample batches)
     """
-    train_ds = HorizonDataset(train_csv, dem_path, mask_path, norm_stats, augment=True,  project_root=project_root)
-    val_ds   = HorizonDataset(val_csv,   dem_path, mask_path, norm_stats, augment=False, project_root=project_root)
+    train_ds = HorizonDataset(train_csv, dem_path, mask_path, norm_stats, augment=True,  project_root=project_root, era5_npy_dir=era5_npy_dir)
+    val_ds   = HorizonDataset(val_csv,   dem_path, mask_path, norm_stats, augment=False, project_root=project_root, era5_npy_dir=era5_npy_dir)
 
     # Per-batch tensors are ~550 MB (mostly y_rain int64 for 16-step rollout × 256×256).
     # prefetch_factor capped at 2 to bound pinned RAM (else 26 GB pin demand at 12w/pf=4).

@@ -45,37 +45,51 @@ def _ssim_simple(pred: torch.Tensor, target: torch.Tensor) -> float:
 # ══════════════════════════════════════════════════════════════════════════════
 class HorizonLoss(nn.Module):
     """
-    L_total = λ_cloud * L_cloud  +  λ_thermo * L_thermo  +  λ_rain * L_rain
+    L_total = λ_cloud * L_cloud  +  λ_wind * L_wind  +  λ_temp * L_temp  +  λ_rain * L_rain
 
     L_cloud  (eq. 3): Dense MSE over full 256×256 grid vs future satellite frame.
                       Acts as spatial consistency constraint — forces cloud motion
                       to follow physically valid fluid flow patterns.
 
-    L_thermo (eq. 4): Masked MSE at IMS station pixels only vs wind+temp readings.
-                      Grounds the model in real sensor data. Gradients blocked
-                      outside station pixels by station_mask.
+    L_wind   (eq. 4a): Masked MSE at IMS station pixels — wind channel only (drivers[:,0]).
+                       Wind is primary physics driver for cloud formation. Kept strong.
+
+    L_temp   (eq. 4b): Masked MSE at IMS station pixels — temp channel only (drivers[:,1]).
+                       Temperature less critical for rain detection. Eased in H3.
 
     L_rain   (eq. 5): Class-Weighted Cross-Entropy at IMS station pixels.
                       64-bin classification (SaTformer logic) with extreme weights
                       on rain classes to counter 98.84% dry-class dominance.
 
-    Default weights (λ_cloud=1.0, λ_thermo=0.5, λ_rain=2.0):
-      Rain gets highest relative weight to combat the Zero-Inflation problem.
-      Tune these via validation CSI and RMSE metrics during Phase C experiments.
+    H3 weights (λ_cloud=1.0, λ_wind=1.0, λ_temp=0.2, λ_rain=0.5):
+      Split thermo supervision: wind kept strong (primary driver),
+      temp eased (less critical for rain). Addresses H2 Stage1 instability.
     """
 
     def __init__(
         self,
         rain_weights:  torch.Tensor,  # (64,) from compute_rain_class_weights()
         lambda_cloud:  float = 1.0,
-        lambda_thermo: float = 0.5,
+        lambda_thermo: float = 0.5,   # legacy param — ignored if lambda_wind/lambda_temp set
         lambda_rain:   float = 2.0,
+        lambda_wind:   float = None,  # H3: split wind supervision (None = use lambda_thermo)
+        lambda_temp:   float = None,  # H3: split temp supervision (None = use lambda_thermo)
     ):
         super().__init__()
         self.masked_mse    = MaskedMSELoss()
         self.lambda_cloud  = lambda_cloud
-        self.lambda_thermo = lambda_thermo
         self.lambda_rain   = lambda_rain
+        # H3 split-thermo mode: separate wind/temp lambdas
+        if lambda_wind is not None and lambda_temp is not None:
+            self.lambda_wind   = lambda_wind
+            self.lambda_temp   = lambda_temp
+            self.lambda_thermo = None   # disabled
+            self._split_thermo = True
+        else:
+            self.lambda_thermo = lambda_thermo
+            self.lambda_wind   = None
+            self.lambda_temp   = None
+            self._split_thermo = False
         self.register_buffer("rain_weights", rain_weights)
         assert not torch.isnan(rain_weights).any(), "rain_weights contains NaN"
         assert not torch.isinf(rain_weights).any(), "rain_weights contains Inf"
@@ -96,8 +110,23 @@ class HorizonLoss(nn.Module):
         # L_cloud: dense MSE — full 256×256 grid (both IR+WV channels)
         l_cloud = F.mse_loss(y_cloud_pred, y_cloud)
 
-        # L_thermo: sparse masked MSE — station pixels only
-        l_thermo = self.masked_mse(drivers, y_thermo, mask)
+        # L_thermo: wind+temp supervision
+        # ERA5 mode: dense full-grid MSE (no mask needed — every pixel has ground truth)
+        # IMS mode: sparse masked MSE — station pixels only
+        era5_dense = batch.get("era5_dense", False)  # True when ERA5 loaded
+        if self._split_thermo:
+            if era5_dense:
+                l_wind = F.mse_loss(drivers[:, 0:1], y_thermo[:, 0:1])
+                l_temp = F.mse_loss(drivers[:, 1:2], y_thermo[:, 1:2])
+            else:
+                l_wind = self.masked_mse(drivers[:, 0:1], y_thermo[:, 0:1], mask)
+                l_temp = self.masked_mse(drivers[:, 1:2], y_thermo[:, 1:2], mask)
+            l_thermo = l_wind + l_temp  # combined for logging
+        else:
+            if era5_dense:
+                l_thermo = F.mse_loss(drivers, y_thermo)
+            else:
+                l_thermo = self.masked_mse(drivers, y_thermo, mask)
 
         # L_rain: sparse class-weighted CE — station pixels only
         # Mask flattening: select only active station pixels before CE computation
@@ -119,11 +148,19 @@ class HorizonLoss(nn.Module):
             # Rare edge case: batch has no station pixels (e.g., all masked out)
             l_rain = y_rain_logits.sum() * 0.0  # zero loss, keeps compute graph alive
 
-        total = (
-            self.lambda_cloud  * l_cloud
-            + self.lambda_thermo * l_thermo
-            + self.lambda_rain   * l_rain
-        )
+        if self._split_thermo:
+            total = (
+                self.lambda_cloud * l_cloud
+                + self.lambda_wind  * l_wind
+                + self.lambda_temp  * l_temp
+                + self.lambda_rain  * l_rain
+            )
+        else:
+            total = (
+                self.lambda_cloud  * l_cloud
+                + self.lambda_thermo * l_thermo
+                + self.lambda_rain   * l_rain
+            )
 
         return {
             "total":  total,
@@ -282,9 +319,11 @@ class Trainer:
                     "effective_batch": grad_accum * train_loader.batch_size,
                     "grad_accum": grad_accum,
                     "precision": precision,
-                    "lambda_cloud": loss_fn.lambda_cloud,
-                    "lambda_thermo": loss_fn.lambda_thermo,
-                    "lambda_rain": loss_fn.lambda_rain,
+                    "lambda_cloud":  loss_fn.lambda_cloud,
+                    "lambda_thermo": loss_fn.lambda_thermo if not loss_fn._split_thermo else None,
+                    "lambda_wind":   loss_fn.lambda_wind,
+                    "lambda_temp":   loss_fn.lambda_temp,
+                    "lambda_rain":   loss_fn.lambda_rain,
                 },
             )
             logger.info(f"W&B run: {wandb.run.url}")
@@ -477,6 +516,8 @@ class Trainer:
     def _val_epoch(self, epoch: int) -> float:
         self.model.eval()
         sums = {"total": 0.0, "cloud": 0.0, "thermo": 0.0, "rain": 0.0}
+        # IMS monitoring accumulators (ERA5 mode only)
+        ims_wind_sq, ims_temp_sq, ims_n = 0.0, 0.0, 0
 
         for batch in tqdm(self.val_loader, desc=f"E{epoch:03d} val  ", leave=False):
             batch = self._to_device(batch)
@@ -487,23 +528,56 @@ class Trainer:
             for k in sums:
                 sums[k] += losses[k].item()
 
+            # IMS RMSE monitoring — compare Stage1 predictions vs real IMS station readings
+            # Only active in ERA5 mode (y_thermo_ims present and era5_dense=True)
+            era5_dense = batch.get("era5_dense", False)
+            if isinstance(era5_dense, torch.Tensor): era5_dense = bool(era5_dense.any())
+            if era5_dense and "y_thermo_ims" in batch:
+                drivers, _, _ = preds
+                mask    = batch["station_mask"]           # (B, H, W) bool
+                y_ims   = batch["y_thermo_ims"][:, 0]    # (B, 2, H, W) step=0
+                # Only at station pixels where IMS has nonzero data
+                ims_mask = mask & (y_ims[:, 0] != 0)     # (B, H, W) — nonzero wind pixels
+                if ims_mask.any():
+                    pred_w = drivers[:, 0][ims_mask].float()
+                    pred_t = drivers[:, 1][ims_mask].float()
+                    ims_w  = y_ims[:, 0][ims_mask].float()
+                    ims_t  = y_ims[:, 1][ims_mask].float()
+                    ims_wind_sq += ((pred_w - ims_w) ** 2).sum().item()
+                    ims_temp_sq += ((pred_t - ims_t) ** 2).sum().item()
+                    ims_n       += ims_mask.sum().item()
+
         n   = len(self.val_loader)
         avg = {k: v / n for k, v in sums.items()}
+
+        # Compute IMS RMSE (denormalized)
+        rmse_wind_ims = float("nan")
+        rmse_temp_ims = float("nan")
+        if ims_n > 0:
+            wind_norm = self.norm_stats.get("wind", (0.0, 1.0)) if self.norm_stats else (0.0, 1.0)
+            temp_norm = self.norm_stats.get("temp", (0.0, 1.0)) if self.norm_stats else (0.0, 1.0)
+            rmse_wind_ims = ((ims_wind_sq / ims_n) ** 0.5) * wind_norm[1]  # denormalize ×std
+            rmse_temp_ims = ((ims_temp_sq / ims_n) ** 0.5) * temp_norm[1]
 
         logger.info(
             f"Epoch {epoch:03d} | VAL    "
             f"total={avg['total']:.4f}  cloud={avg['cloud']:.4f}  "
             f"thermo={avg['thermo']:.4f}  rain={avg['rain']:.4f}"
+            + (f"  | IMS_RMSE wind={rmse_wind_ims:.3f}m/s  temp={rmse_temp_ims:.3f}C" if ims_n > 0 else "")
         )
         if self.use_wandb:
             import wandb
-            wandb.log({
+            log = {
                 "val/total":   avg["total"],
                 "val/cloud":   avg["cloud"],
                 "val/thermo":  avg["thermo"],
                 "val/rain":    avg["rain"],
                 "epoch":       epoch,
-            })
+            }
+            if ims_n > 0:
+                log["val/ims_rmse_wind"] = rmse_wind_ims
+                log["val/ims_rmse_temp"] = rmse_temp_ims
+            wandb.log(log)
         return avg
 
     def _save(self, epoch: int, val_loss: float, is_best: bool) -> None:

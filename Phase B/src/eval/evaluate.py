@@ -242,7 +242,8 @@ def evaluate_checkpoint(
 # ══════════════════════════════════════════════════════════════════════════════
 # Per-horizon multi-step evaluation (Phase 3.1 — research-grade results)
 # ══════════════════════════════════════════════════════════════════════════════
-DEFAULT_HORIZONS_STEPS  = (1, 2, 4, 8, 12, 16)   # 15, 30, 60, 120, 180, 240 min
+DEFAULT_HORIZONS_STEPS  = (1, 2)                 # 15, 30 min (sprint scope)
+# Previously (1, 2, 4, 8, 12, 16) — restore for 4hr horizon evaluation later.
 DEFAULT_RAIN_THRESHOLDS = (1, 3, 6, 24)          # trace, light, moderate, heavy
 
 

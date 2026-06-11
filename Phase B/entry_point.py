@@ -90,6 +90,9 @@ def main() -> int:
                              "Loads model weights and skips epochs already done. "
                              "Optimizer state is NOT preserved (cosine LR is "
                              "fast-forwarded to the right step).")
+    parser.add_argument("--era5-path", default=None,
+                        help="Path to era5_npy/ directory. If set, uses dense ERA5 "
+                             "wind+temp as Stage1 supervision instead of sparse IMS stations.")
     parser.add_argument("--train-csv", default="data/processed/index_train.csv",
                         help="Path to train index CSV. Pass index_train_subset.csv "
                              "after running subsample_train.py to train on a smaller "
@@ -108,6 +111,13 @@ def main() -> int:
     if args.device_id >= n_gpus:
         logger.error(f"--device-id {args.device_id} invalid: only {n_gpus} GPU(s) found.")
         return 1
+
+    # Auto-select GPU with most VRAM if requested device has < 16GB (e.g. after reboot GPU order swaps)
+    requested = args.device_id
+    if torch.cuda.get_device_properties(requested).total_memory < 16 * 1024**3:
+        best = max(range(n_gpus), key=lambda i: torch.cuda.get_device_properties(i).total_memory)
+        logger.warning(f"GPU {requested} has <16GB VRAM — auto-switching to GPU {best} (most VRAM)")
+        args.device_id = best
 
     torch.cuda.set_device(args.device_id)
     props = torch.cuda.get_device_properties(args.device_id)
@@ -130,14 +140,17 @@ def main() -> int:
                 f"rain_mean={rain_weights[1:].mean():.3f}")
 
     logger.info(f"Train CSV: {args.train_csv}")
+    if args.era5_path:
+        logger.info(f"ERA5 dense supervision: {args.era5_path}")
     train_loader, val_loader = get_dataloaders(
-        train_csv  =args.train_csv,
-        val_csv    ="data/processed/index_val.csv",
-        dem_path   ="data/processed/dem_256.npy",
-        mask_path  ="data/processed/station_mask.pt",
-        norm_stats =norm_stats,
-        batch_size =args.batch_size,
-        num_workers=args.num_workers,
+        train_csv   =args.train_csv,
+        val_csv     ="data/processed/index_val.csv",
+        dem_path    ="data/processed/dem_256.npy",
+        mask_path   ="data/processed/station_mask.pt",
+        norm_stats  =norm_stats,
+        batch_size  =args.batch_size,
+        num_workers =args.num_workers,
+        era5_npy_dir=args.era5_path,
     )
     logger.info(f"Train batches: {len(train_loader)}  |  Val batches: {len(val_loader)}")
 
@@ -154,8 +167,15 @@ def main() -> int:
     loss_fn = HorizonLoss(
         rain_weights =rain_weights,
         lambda_cloud =1.0,
-        lambda_thermo=0.5,
-        lambda_rain  =2.0,
+        lambda_wind  =1.0,  # CASCADE V4 EXPERIMENT (H3): SPLIT thermo supervision.
+                            # H2 (lambda_thermo=0.1 unified) caused Stage1 instability
+                            # and divergence ep25-29 — val_thermo spiked to 30+.
+                            # H3 hypothesis: wind is primary physics driver for cloud
+                            # formation → keep strong (1.0). Temp less critical for
+                            # rain detection → ease to 0.2. Avoids blanket weakening
+                            # that starved Stage1 of gradient signal entirely.
+        lambda_temp  =0.5,  # eased temp: less critical for rain, avoids Stage1 instability
+        lambda_rain  =0.5,  # kept at 0.5 from v2
     )
 
     trainer = Trainer(

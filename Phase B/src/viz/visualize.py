@@ -287,7 +287,7 @@ def visualize_forecast(
 
     # ── Row 3: Ground Truth (optional) ───────────────────────────────────────
     if has_gt:
-        gs3 = _make_gs(3, 2)
+        gs3 = _make_gs(3, 3)  # 3 panels: GT cloud | GT cloud + pred rain overlay | GT rain
 
         ax_gc = fig.add_subplot(gs3[0, 0])
         im_gc = ax_gc.imshow(gt_c, cmap=CMAP_CLOUD, vmin=vmin_ir, vmax=vmax_ir,
@@ -298,8 +298,23 @@ def visualize_forecast(
         _style_ax(ax_gc, "Ground Truth  →  Satellite Cloud")
         _add_colorbar(fig, im_gc, ax_gc, "BT (norm.)")
 
+        # ── GT cloud + predicted rain overlay — for human visual comparison ───
+        ax_ov = fig.add_subplot(gs3[0, 1])
+        ax_ov.imshow(gt_c, cmap=CMAP_CLOUD, vmin=vmin_ir, vmax=vmax_ir,
+                     origin="upper", aspect=2.5)
+        _overlay_dem(ax_ov, dem_np, alpha=0.15)
+        _draw_coastline(ax_ov, dem_raw)
+        rain_mask = r_np > 1.0  # only show pixels with predicted rain > 1 mm/hr
+        if rain_mask.any():
+            norm_r = np.clip(r_np / max(rain_vmax, 1.0), 0, 1)
+            rgba   = CMAP_RAIN(norm_r)                              # (H, W, 4)
+            rgba[..., 3] = np.where(rain_mask, 0.65, 0.0)          # semi-transparent where rain
+            ax_ov.imshow(rgba, origin="upper", aspect=2.5, zorder=4)
+        _scatter_stations(ax_ov, station_pixels, size=14)
+        _style_ax(ax_ov, "GT Cloud  +  Predicted Rain Overlay")
+
         if gt_r is not None:
-            ax_gr = fig.add_subplot(gs3[0, 1])
+            ax_gr = fig.add_subplot(gs3[0, 2])
             im_gr = ax_gr.imshow(gt_r, cmap=CMAP_RAIN, vmin=0, vmax=rain_vmax,
                                   origin="upper", aspect=2.5)
             _overlay_dem(ax_gr, dem_np, alpha=0.25)
@@ -370,11 +385,12 @@ def visualize_rollout(
     if n_rows == 1:
         axes = axes[np.newaxis, :]  # ensure 2D indexing
 
-    # Consistent IR range across all steps
-    all_ir = ([sd["pred_ir"].numpy() for sd in steps_data] +
-               [sd["true_ir"].numpy() for sd in steps_data])
-    vmin_ir = float(min(a.min() for a in all_ir))
-    vmax_ir = float(max(a.max() for a in all_ir))
+    # Consistent IR range across all steps — anchored to real satellite values only.
+    # Using pred_ir for range would let model outliers skew colorscale (e.g. T+15
+    # pred all-white while T+30 looks normal). Real IR defines the expected BT range.
+    true_ir_arrays = [sd["true_ir"].numpy() for sd in steps_data]
+    vmin_ir = float(min(a.min() for a in true_ir_arrays))
+    vmax_ir = float(max(a.max() for a in true_ir_arrays))
 
     all_rain_mm = [RAIN_BIN_MID[sd["pred_rain_cls"].numpy().astype(int)] for sd in steps_data]
     rain_vmax = max(float(a.max()) for a in all_rain_mm) if all_rain_mm else 1.0
