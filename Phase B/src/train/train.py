@@ -221,6 +221,7 @@ class Trainer:
         use_wandb:      bool  = False,
         wandb_project:  str   = "horizon-forecast",
         resume_ckpt:    Optional[str] = None,
+        resume_weights_only: bool = False,  # load model weights only, reset epoch/LR (for phase-transfer)
         norm_stats:     Optional[Dict] = None,
         station_pixels: Optional[list] = None,
         viz_every:      int   = 10,
@@ -260,8 +261,10 @@ class Trainer:
         self.val_loader   = val_loader
 
         # fused AdamW available on Ampere+ (H100, A100, RTX 30/40 series)
+        # Only optimize unfrozen params — freeze_stage support for H5 two-phase training.
+        trainable_params = [p for p in self.model.parameters() if p.requires_grad]
         self.optimizer = torch.optim.AdamW(
-            self.model.parameters(),
+            trainable_params,
             lr=lr,
             weight_decay=weight_decay,
             betas=(0.9, 0.95),
@@ -328,6 +331,7 @@ class Trainer:
             )
             logger.info(f"W&B run: {wandb.run.url}")
 
+        self.resume_weights_only = resume_weights_only
         if resume_ckpt is not None:
             self._resume(resume_ckpt)
 
@@ -335,6 +339,13 @@ class Trainer:
         ckpt = torch.load(ckpt_path, map_location=self.device, weights_only=True)
         raw_model = getattr(self.model, "_orig_mod", self.model)
         raw_model.load_state_dict(ckpt["model_state"])
+        if self.resume_weights_only:
+            # Phase-transfer: load weights only, start fresh from epoch 1.
+            # LR scheduler stays at step 0 (warmup from scratch).
+            logger.info(
+                f"Weights-only load | ckpt={ckpt_path} | start_epoch=1 (epoch/LR reset)"
+            )
+            return
         done_epoch       = int(ckpt["epoch"])
         self.start_epoch = done_epoch + 1
         self.best_val    = float(ckpt.get("val_loss", float("inf")))
@@ -468,13 +479,14 @@ class Trainer:
                 rollout_loss.backward()
 
             if (batch_idx + 1) % self.grad_accum == 0:
+                trainable = [p for p in self.model.parameters() if p.requires_grad]
                 if self.scaler is not None:
                     self.scaler.unscale_(self.optimizer)
-                    torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
+                    torch.nn.utils.clip_grad_norm_(trainable, max_norm=1.0)
                     self.scaler.step(self.optimizer)
                     self.scaler.update()
                 else:
-                    torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
+                    torch.nn.utils.clip_grad_norm_(trainable, max_norm=1.0)
                     self.optimizer.step()
                 self.scheduler.step()
                 self.optimizer.zero_grad(set_to_none=True)

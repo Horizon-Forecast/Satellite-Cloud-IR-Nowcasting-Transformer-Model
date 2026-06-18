@@ -382,15 +382,16 @@ class HorizonDataset(Dataset):
 
 # ── DataLoader factory ──────────────────────────────────────────────────────────
 def get_dataloaders(
-    train_csv:    str,
-    val_csv:      str,
-    dem_path:     str,
-    mask_path:    str,
-    norm_stats:   Dict,
-    batch_size:   int = 16,
-    num_workers:  int = 8,
-    project_root: Optional[str] = None,
-    era5_npy_dir: Optional[str] = None,
+    train_csv:      str,
+    val_csv:        str,
+    dem_path:       str,
+    mask_path:      str,
+    norm_stats:     Dict,
+    batch_size:     int = 16,
+    val_batch_size: Optional[int] = None,
+    num_workers:    int = 8,
+    project_root:   Optional[str] = None,
+    era5_npy_dir:   Optional[str] = None,
 ) -> Tuple[DataLoader, DataLoader]:
     """
     H100-optimized DataLoader configuration:
@@ -410,8 +411,9 @@ def get_dataloaders(
         persistent_workers=(num_workers > 0),
         prefetch_factor=4 if num_workers > 0 else None,
     )
+    _val_bs = val_batch_size if val_batch_size is not None else batch_size
     train_loader = DataLoader(train_ds, batch_size=batch_size,
                               shuffle=True, drop_last=True, **kwargs)
-    val_loader   = DataLoader(val_ds,   batch_size=batch_size,
+    val_loader   = DataLoader(val_ds,   batch_size=_val_bs,
                               shuffle=False, **kwargs)
     return train_loader, val_loader

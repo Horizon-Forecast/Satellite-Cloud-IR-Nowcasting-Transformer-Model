@@ -55,6 +55,10 @@ def main() -> int:
     parser.add_argument("--smoke", action="store_true",
                         help="2-epoch sanity check (verifies pipeline end-to-end)")
     parser.add_argument("--batch-size", type=int, default=16)
+    parser.add_argument("--val-batch-size", type=int, default=None,
+                        help="Val DataLoader batch size. Defaults to --batch-size. "
+                             "Set larger (e.g. 64) to exploit free VRAM during inference "
+                             "(no gradients/optimizer states). A5000 24GB: 64-96 safe.")
     parser.add_argument("--grad-accum", type=int, default=2)
     parser.add_argument("--num-workers", type=int, default=4,
                         help="DataLoader workers. 4 measured stable on Windows. "
@@ -90,6 +94,11 @@ def main() -> int:
                              "Loads model weights and skips epochs already done. "
                              "Optimizer state is NOT preserved (cosine LR is "
                              "fast-forwarded to the right step).")
+    parser.add_argument("--resume-weights-only", action="store_true",
+                        help="Load model weights from --resume-ckpt but reset epoch "
+                             "counter and LR schedule to 1. Use for phase-transfer "
+                             "(e.g. H5 Phase1→Phase2) where checkpoint epoch should "
+                             "not carry over.")
     parser.add_argument("--era5-path", default=None,
                         help="Path to era5_npy/ directory. If set, uses dense ERA5 "
                              "wind+temp as Stage1 supervision instead of sparse IMS stations.")
@@ -97,6 +106,18 @@ def main() -> int:
                         help="Path to train index CSV. Pass index_train_subset.csv "
                              "after running subsample_train.py to train on a smaller "
                              "fraction (sprint-speed mode).")
+    # H5 two-phase frozen training
+    parser.add_argument("--freeze-stage", choices=["none", "mani", "encoder_phys"],
+                        default="none",
+                        help="H5 two-phase: 'mani' freezes ManifestationHead (Phase 1 — "
+                             "train encoder+phys_head only). 'encoder_phys' freezes "
+                             "SimVPv2Encoder+PhysicsDriverHead (Phase 2 — train mani_head only).")
+    parser.add_argument("--lambda-cloud",  type=float, default=None,
+                        help="Override lambda_cloud loss weight (default 1.0)")
+    parser.add_argument("--lambda-thermo", type=float, default=None,
+                        help="Override combined thermo loss weight (replaces split wind/temp)")
+    parser.add_argument("--lambda-rain",   type=float, default=None,
+                        help="Override lambda_rain loss weight (default 0.5)")
     args = parser.parse_args()
 
     if args.smoke:
@@ -148,8 +169,9 @@ def main() -> int:
         dem_path    ="data/processed/dem_256.npy",
         mask_path   ="data/processed/station_mask.pt",
         norm_stats  =norm_stats,
-        batch_size  =args.batch_size,
-        num_workers =args.num_workers,
+        batch_size      =args.batch_size,
+        val_batch_size  =args.val_batch_size,
+        num_workers     =args.num_workers,
         era5_npy_dir=args.era5_path,
     )
     logger.info(f"Train batches: {len(train_loader)}  |  Val batches: {len(val_loader)}")
@@ -162,21 +184,50 @@ def main() -> int:
     )
     if args.no_cascade:
         logger.warning("ABLATION MODE: --no-cascade ON. Drivers zeroed before ManifestationHead.")
-    logger.info(f"Model parameters: {model.n_params/1e6:.1f}M")
 
-    loss_fn = HorizonLoss(
-        rain_weights =rain_weights,
-        lambda_cloud =1.0,
-        lambda_wind  =1.0,  # CASCADE V4 EXPERIMENT (H3): SPLIT thermo supervision.
-                            # H2 (lambda_thermo=0.1 unified) caused Stage1 instability
-                            # and divergence ep25-29 — val_thermo spiked to 30+.
-                            # H3 hypothesis: wind is primary physics driver for cloud
-                            # formation → keep strong (1.0). Temp less critical for
-                            # rain detection → ease to 0.2. Avoids blanket weakening
-                            # that starved Stage1 of gradient signal entirely.
-        lambda_temp  =0.5,  # eased temp: less critical for rain, avoids Stage1 instability
-        lambda_rain  =0.5,  # kept at 0.5 from v2
-    )
+    # H5 two-phase freeze logic
+    if args.freeze_stage == "mani":
+        for p in model.mani_head.parameters():
+            p.requires_grad_(False)
+        frozen_params  = sum(p.numel() for p in model.mani_head.parameters())
+        trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+        logger.info(f"FREEZE Phase 1: mani_head frozen ({frozen_params/1e6:.1f}M). "
+                    f"Trainable: {trainable_params/1e6:.1f}M (encoder + phys_head)")
+    elif args.freeze_stage == "encoder_phys":
+        for p in model.encoder.parameters():
+            p.requires_grad_(False)
+        for p in model.phys_head.parameters():
+            p.requires_grad_(False)
+        frozen_params  = (sum(p.numel() for p in model.encoder.parameters()) +
+                          sum(p.numel() for p in model.phys_head.parameters()))
+        trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+        logger.info(f"FREEZE Phase 2: encoder+phys_head frozen ({frozen_params/1e6:.1f}M). "
+                    f"Trainable: {trainable_params/1e6:.1f}M (mani_head only)")
+    else:
+        logger.info(f"Model parameters: {model.n_params/1e6:.1f}M")
+
+    # Loss weights: CLI overrides take precedence; Phase 1 typically zeros cloud+rain,
+    # Phase 2 typically zeros thermo.
+    lam_cloud  = args.lambda_cloud  if args.lambda_cloud  is not None else 1.0
+    lam_rain   = args.lambda_rain   if args.lambda_rain   is not None else 0.5
+    if args.lambda_thermo is not None:
+        # Unified thermo override (bypasses split wind/temp)
+        loss_fn = HorizonLoss(
+            rain_weights =rain_weights,
+            lambda_cloud =lam_cloud,
+            lambda_thermo=args.lambda_thermo,
+            lambda_rain  =lam_rain,
+        )
+    else:
+        loss_fn = HorizonLoss(
+            rain_weights =rain_weights,
+            lambda_cloud =lam_cloud,
+            lambda_wind  =1.0,
+            lambda_temp  =0.5,
+            lambda_rain  =lam_rain,
+        )
+    logger.info(f"Loss weights: cloud={lam_cloud}  rain={lam_rain}  "
+                f"thermo={'unified=' + str(args.lambda_thermo) if args.lambda_thermo is not None else 'wind=1.0 temp=0.5'}")
 
     trainer = Trainer(
         model                =model,
@@ -199,6 +250,7 @@ def main() -> int:
         wandb_project        =args.wandb_project,
         multihorizon_every   =0 if args.smoke else args.multihorizon_every,
         resume_ckpt          =args.resume_ckpt,
+        resume_weights_only  =args.resume_weights_only,
     )
     trainer.train()
     logger.info("training complete")
