@@ -240,3 +240,5 @@ Phase B/bench_io.py
 Phase B/preflight.py
 Phase B/subsample_train.py
 Phase B/download_srtm.py
+Phase B/run_multihorizon.py
+Phase B/CLAUDE_CONTEXT.md
