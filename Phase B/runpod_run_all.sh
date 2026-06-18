@@ -81,7 +81,6 @@ run_one() {
             --max-epochs 30 --multihorizon-every 10 \
             --train-csv data/processed/index_train.csv \
             --era5-path data/era5_npy \
-            --wandb --wandb-project horizon-forecast \
             "$@" >> "$logf" 2>&1
         local code=$?
 
