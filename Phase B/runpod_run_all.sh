@@ -128,7 +128,7 @@ log "Pipeline started: $(date '+%F %T')"
 run_one h6 --ckpt-dir checkpoints/h6 || exit 1
 
 # ── H6b — no-cascade ablation ─────────────────────────────────────────────────
-run_one h6b --ckpt-dir checkpoints/h6b --no-cascade || exit 1
+# run_one h6b --ckpt-dir checkpoints/h6b --no-cascade || exit 1
 
 # ── H7 Phase1 — freeze mani_head, train encoder+phys ──────────────────────────
 run_one h7_phase1 --ckpt-dir checkpoints/h7_phase1 \
