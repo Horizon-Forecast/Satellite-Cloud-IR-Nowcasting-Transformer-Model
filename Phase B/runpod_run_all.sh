@@ -15,12 +15,13 @@
 #   export ANTHROPIC_API_KEY=sk-ant-...         # for failure diagnosis (optional)
 #
 # Usage (from /workspace/project):
-#   nohup bash /workspace/runpod_run_all.sh > logs/runpod_run_all.log 2>&1 &
+#   cd /workspace/project && mkdir -p logs && nohup bash /workspace/runpod_run_all.sh > logs/runpod_run_all.log 2>&1 &
 #
 # Naming: H6=local-H4 (cascade+ERA5), H6b=local-H4b (no-cascade), H7=local-H5 (two-phase).
 
 PROJECT=/workspace/project
-PYTHON=$PROJECT/venv/bin/python
+# Use venv python if it exists, else system python (RunPod base image installs deps globally)
+if [ -x "$PROJECT/venv/bin/python" ]; then PYTHON="$PROJECT/venv/bin/python"; else PYTHON="$(command -v python || command -v python3)"; fi
 LOGS=$PROJECT/logs
 PROGRESS=$PROJECT/PROGRESS_LOG.md
 NTFY_TOPIC="${NTFY_TOPIC:-}"
