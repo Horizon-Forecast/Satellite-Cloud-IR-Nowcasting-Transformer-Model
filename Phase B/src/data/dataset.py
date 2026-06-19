@@ -395,7 +395,7 @@ def get_dataloaders(
 ) -> Tuple[DataLoader, DataLoader]:
     """
     H100-optimized DataLoader configuration:
-      pin_memory=True          → zero-copy CPU→GPU transfer
+      pin_memory=False          → zero-copy CPU→GPU transfer
       persistent_workers=True  → worker processes survive between epochs
       prefetch_factor=4        → 4 batches pre-loaded while GPU trains
       drop_last=True           → stable GroupNorm statistics (no single-sample batches)
@@ -407,7 +407,7 @@ def get_dataloaders(
     # prefetch_factor capped at 2 to bound pinned RAM (else 26 GB pin demand at 12w/pf=4).
     kwargs = dict(
         num_workers=num_workers,
-        pin_memory=True,
+        pin_memory=False,
         persistent_workers=False,
         prefetch_factor=2 if num_workers > 0 else None,
     )
