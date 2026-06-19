@@ -78,7 +78,7 @@ run_one() {
         $PYTHON entry_point.py \
             --device-id 0 --precision bf16 \
             --batch-size $bs --grad-accum 2 --val-batch-size 64 \
-            --num-workers 16 --rollout-max 2 \
+            --num-workers 32 --rollout-max 2 \
             --max-epochs 30 --multihorizon-every 10 \
             --train-csv data/processed/index_train.csv \
             --era5-path data/era5_npy \
