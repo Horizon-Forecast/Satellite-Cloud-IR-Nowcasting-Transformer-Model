@@ -408,7 +408,7 @@ def get_dataloaders(
     kwargs = dict(
         num_workers=num_workers,
         pin_memory=True,
-        persistent_workers=(num_workers > 0),
+        persistent_workers=False,
         prefetch_factor=2 if num_workers > 0 else None,
     )
     _val_bs = val_batch_size if val_batch_size is not None else batch_size
