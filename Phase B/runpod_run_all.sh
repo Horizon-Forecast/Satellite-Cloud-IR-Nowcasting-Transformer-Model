@@ -125,7 +125,7 @@ notify "=== Horizon training pipeline started on H100 ==="
 log "Pipeline started: $(date '+%F %T')"
 
 # ── H6 — cascade + ERA5 ───────────────────────────────────────────────────────
-run_one h6 --ckpt-dir checkpoints/h6 || exit 1
+# run_one h6 --ckpt-dir checkpoints/h6 || exit 1
 
 # ── H6b — no-cascade ablation ─────────────────────────────────────────────────
 # run_one h6b --ckpt-dir checkpoints/h6b --no-cascade || exit 1
