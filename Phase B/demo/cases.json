@@ -1,0 +1,42 @@
+[
+  {
+    "id": "case1", "idx": 50285, "type": "Light · best of both", "label": "Scattered cells",
+    "time": "2025-12-08 03:45 UTC",
+    "caption": "Driver-First CSI 0.67 + SSIM 0.81 at T+15 — strong rain skill and crisp clouds; End-to-End ablation 0."
+  },
+  {
+    "id": "case2", "idx": 50295, "type": "Moderate · high both", "label": "Morning rain",
+    "time": "2025-12-08 06:15 UTC",
+    "caption": "CSI 0.50 + SSIM 0.78 at T+15; ablation 0 — drivers decisive on this convective cell."
+  },
+  {
+    "id": "case3", "idx": 17235, "type": "Heavy · both catch it", "label": "Frontal storm",
+    "time": "2024-12-27 22:45 UTC",
+    "caption": "Both models catch the rain — Driver-First better: CSI 0.36 vs ablation 0.30 at T+30 (SSIM 0.72). Shows the comparison is real."
+  },
+  {
+    "id": "case4", "idx": 22445, "type": "Moderate · strong skill", "label": "Spring rain",
+    "time": "2025-02-20 06:30 UTC",
+    "caption": "CSI 0.60 at T+15 vs ablation 0 — large driver advantage."
+  },
+  {
+    "id": "case5", "idx": 52330, "type": "Heavy · clear win", "label": "Heavy storm",
+    "time": "2025-12-29 11:00 UTC",
+    "caption": "Driver-First CSI 0.39 vs ablation 0.08 at T+45 — cascade ~5× the ablation."
+  },
+  {
+    "id": "case6", "idx": 17270, "type": "Heavy · cascade ahead", "label": "Frontal band",
+    "time": "2024-12-28 07:30 UTC",
+    "caption": "CSI 0.29 vs ablation 0.18 at T+30 — Driver-First ahead, ablation partial."
+  },
+  {
+    "id": "case7", "idx": 25175, "type": "Moderate · spring storm", "label": "March storm",
+    "time": "2025-03-20 17:00 UTC",
+    "caption": "Different season — CSI 0.27 vs ablation 0.13 at T+30. Cascade roughly doubles the ablation."
+  },
+  {
+    "id": "case8", "idx": 48140, "type": "Heavy · close case", "label": "Autumn rain",
+    "time": "2025-11-15 14:00 UTC",
+    "caption": "Close case — Driver-First 0.20 vs ablation 0.14 at T+15; cascade still ahead, ablation nearly matches."
+  }
+]

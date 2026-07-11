@@ -1,13 +1,14 @@
-# src/data/dataset.py
-# Horizon Forecast — Data Fusion Pipeline (Phase B)
-# Authors: Or Mordechay Hod, Gilad Boudman  |  Braude College, CODE: 26-1-R-1
-#
-# Fuses 3 data sources into a unified (B, C_stacked=12, H=256, W=256) 4D tensor:
-#   - EUMETSAT SEVIRI  : IR 10.8µm + WV 6.2µm  (dense, dynamic)
-#   - NASA SRTM DEM    : Digital Elevation Model (dense, static)
-#   - IMS Ground Stations: wind, temperature, precipitation (sparse, dynamic)
+"""
+Data Fusion Pipeline (Phase B) — the Dataset and DataLoader.
+
+Fuses 3 data sources into a unified (B, C_stacked=12, H=256, W=256) 4D tensor:
+  - EUMETSAT SEVIRI      : IR 10.8µm + WV 6.2µm  (dense, dynamic)
+  - NASA SRTM DEM        : Digital Elevation Model (dense, static)
+  - IMS Ground Stations  : wind, temperature, precipitation (sparse, dynamic)
+"""
 
 import logging
+import os
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -18,7 +19,7 @@ from torch.utils.data import DataLoader, Dataset
 
 logger = logging.getLogger(__name__)
 
-# ── Spatial grid constants (§3.1.1 of project doc) ─────────────────────────────
+# Spatial grid constants (§3.1.1 of project doc)
 GRID_BOUNDS = dict(lat_min=29.0, lat_max=34.0, lon_min=34.0, lon_max=36.0)
 GRID_H, GRID_W = 256, 256
 T_IN      = 4    # 4 historical frames × 15 min = 60 min history
@@ -37,7 +38,7 @@ _RAIN_EDGES = np.concatenate([
 RAIN_BIN_MID = 0.5 * (_RAIN_EDGES[:-1] + np.minimum(_RAIN_EDGES[1:], 60.0))
 
 
-# ── Geospatial helpers ──────────────────────────────────────────────────────────
+# Geospatial helpers
 def latlon_to_pixel(lat: float, lon: float) -> Tuple[int, int]:
     """
     Convert GPS coordinates to pixel (row, col) on the 256x256 grid.
@@ -113,14 +114,14 @@ def compute_rain_class_weights(
         counts[c] += 1
 
     weights = 1.0 / np.sqrt(counts)
-    weights[1:] *= 5.0        # was 10.0; reduced after ep 10 multihorizon eval revealed
+    weights[1:] *= 5.0        # was 10.0, reduced after ep 10 multihorizon eval revealed
                               # POD=0.99 + FAR=0.94 — model over-predicts rain due to
                               # too-aggressive class weighting. 5x is moderate.
     weights /= weights.mean() # normalize: mean weight = 1
     return torch.tensor(weights, dtype=torch.float32)
 
 
-# ── Main Dataset ────────────────────────────────────────────────────────────────
+# Main Dataset
 def _rebase_index(index: pd.DataFrame, project_root: str) -> pd.DataFrame:
     """
     Rewrite absolute path columns so they point to project_root instead of
@@ -193,7 +194,7 @@ class HorizonDataset(Dataset):
         norm_stats: Optional[Dict] = None,
         augment: bool = False,
         project_root: Optional[str] = None,
-        era5_npy_dir: Optional[str] = None,   # ERA5 dense thermo supervision
+        era5_npy_dir: Optional[str] = None,      # ERA5 dense thermo supervision (wind/temp)
     ):
         self.index = pd.read_csv(index_csv, parse_dates=["timestamp"])
         if project_root is not None:
@@ -242,9 +243,23 @@ class HorizonDataset(Dataset):
         return path
 
     def _load_sat(self, path: str) -> torch.Tensor:
-        """Load one SEVIRI frame → (2, H, W): channel 0=IR, channel 1=WV."""
+        """Load one SEVIRI frame → (2, H, W): channel 0=IR, channel 1=WV.
+
+        By default the band order is normalized on the fly (IR=higher-mean band ->
+        channel 0), correcting the alternating IR/WV swap in the raw EUMETVIEW TIFs.
+        This matches the channel layout the delivered checkpoints were trained on, so
+        no environment setup is needed for normal use. The correction is idempotent
+        (frames already in IR-first order are left untouched). To disable it — only
+        needed to reproduce the original, pre-fix models — set HORIZON_FIX_CHANNELS=0.
+        It is env-gated (rather than an instance flag) so spawned DataLoader workers
+        (Windows spawn re-imports this module) inherit the same setting."""
         path = self._resolve_path(path)
         arr = np.load(path).astype(np.float32)  # (2, 256, 256)
+        if os.environ.get("HORIZON_FIX_CHANNELS", "1") != "0" and arr.shape[0] == 2:
+            # IR_108 (SEVIRI band 09) is the higher-mean, textured imagery. WV_062
+            # (band 05) is much lower-mean. Enforce IR -> channel 0.
+            if arr[0].mean() < arr[1].mean():   # band0 is WV (low mean) -> swap
+                arr = arr[::-1].copy()
         ir  = self._norm(torch.from_numpy(arr[0:1]), "ir")
         wv  = self._norm(torch.from_numpy(arr[1:2]), "wv")
         return torch.cat([ir, wv], dim=0)       # (2, 256, 256)
@@ -374,13 +389,13 @@ class HorizonDataset(Dataset):
             "y_thermo":     y_thermo,      # (T_ROLLOUT, 2, 256, 256) float32  ERA5 or IMS wind+temp
             "y_thermo_ims": y_thermo_ims,  # (T_ROLLOUT, 2, 256, 256) float32  IMS sparse always (monitoring)
             "station_mask": mask,          # (256, 256) bool
-            "y_rain":       y_rain,        # (T_ROLLOUT, 256, 256) int64
+            "y_rain":       y_rain,        # (T_ROLLOUT, 256, 256) int64  (IMS sparse rain classes)
             "valid_steps":  torch.tensor(valid_steps, dtype=torch.int32),
-            "era5_dense":   self.era5_npy_dir is not None,  # True = dense ERA5 thermo supervision
+            "era5_dense":   self.era5_npy_dir is not None,    # True = dense ERA5 thermo supervision
         }
 
 
-# ── DataLoader factory ──────────────────────────────────────────────────────────
+# DataLoader factory
 def get_dataloaders(
     train_csv:      str,
     val_csv:        str,
@@ -394,11 +409,11 @@ def get_dataloaders(
     era5_npy_dir:   Optional[str] = None,
 ) -> Tuple[DataLoader, DataLoader]:
     """
-    H100-optimized DataLoader configuration:
+    DataLoader configuration:
       pin_memory=False          → zero-copy CPU→GPU transfer
-      persistent_workers=True  → worker processes survive between epochs
-      prefetch_factor=4        → 4 batches pre-loaded while GPU trains
-      drop_last=True           → stable GroupNorm statistics (no single-sample batches)
+      persistent_workers=False  → workers do not survive between epochs
+      prefetch_factor=2         → 2 batches pre-loaded while GPU trains
+      drop_last=True            → stable GroupNorm statistics (no single-sample batches)
     """
     train_ds = HorizonDataset(train_csv, dem_path, mask_path, norm_stats, augment=True,  project_root=project_root, era5_npy_dir=era5_npy_dir)
     val_ds   = HorizonDataset(val_csv,   dem_path, mask_path, norm_stats, augment=False, project_root=project_root, era5_npy_dir=era5_npy_dir)

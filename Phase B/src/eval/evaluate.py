@@ -1,10 +1,10 @@
-# src/eval/evaluate.py
-# Horizon Forecast — Evaluation Metrics (§7.1, Table 1)
-# Authors: Or Mordechay Hod, Gilad Boudman | Braude College, CODE: 26-1-R-1
-#
-# Implements CSI, HSS, SSIM, and a full-val-set evaluate_checkpoint() runner.
-# Called automatically by Trainer every eval_every epochs during training.
-# Can also be called standalone on a loaded checkpoint.
+"""
+Evaluation Metrics (§7.1, Table 1).
+
+Implements CSI, HSS, SSIM, and a full-val-set evaluate_checkpoint() runner.
+Called automatically by Trainer every eval_every epochs during training.
+Can also be called standalone on a loaded checkpoint.
+"""
 
 from __future__ import annotations
 
@@ -20,9 +20,7 @@ from torch import autocast
 logger = logging.getLogger(__name__)
 
 
-# ══════════════════════════════════════════════════════════════════════════════
 # Binary weather skill scores (station-pixel rain classification)
-# ══════════════════════════════════════════════════════════════════════════════
 
 def compute_csi(
     y_true_cls: np.ndarray,
@@ -53,7 +51,7 @@ def compute_hss(
     """
     Heidke Skill Score = 2(ad - bc) / ((a+c)(c+d) + (a+b)(b+d)).
 
-    > 0: beats random; 1: perfect; < 0: worse than random.
+    > 0: beats random, 1: perfect, < 0: worse than random.
     Binarizes rain the same way as compute_csi.
     """
     true_rain = y_true_cls >= rain_threshold_class
@@ -104,9 +102,7 @@ def compute_far(
     return FA / denom if denom > 0 else float("nan")
 
 
-# ══════════════════════════════════════════════════════════════════════════════
 # Structural similarity for cloud forecast quality (§7.1)
-# ══════════════════════════════════════════════════════════════════════════════
 
 def compute_ssim_cloud(y_true: np.ndarray, y_pred: np.ndarray) -> float:
     """
@@ -114,7 +110,7 @@ def compute_ssim_cloud(y_true: np.ndarray, y_pred: np.ndarray) -> float:
 
     y_true, y_pred: float arrays shape (H, W) or (N, H, W).
     For a batch, computes per-image SSIM and returns the mean.
-    Requires scikit-image (already in Colab; pip install scikit-image locally).
+    Requires scikit-image (already in Colab, pip install scikit-image locally).
     """
     from skimage.metrics import structural_similarity as ssim
 
@@ -131,9 +127,7 @@ def compute_ssim_cloud(y_true: np.ndarray, y_pred: np.ndarray) -> float:
     return float(np.mean(scores))
 
 
-# ══════════════════════════════════════════════════════════════════════════════
 # Full validation-set evaluation (spec §7.1 Table 1 targets)
-# ══════════════════════════════════════════════════════════════════════════════
 
 @torch.no_grad()
 def evaluate_checkpoint(
@@ -239,9 +233,7 @@ def evaluate_checkpoint(
     }
 
 
-# ══════════════════════════════════════════════════════════════════════════════
 # Per-horizon multi-step evaluation (Phase 3.1 — research-grade results)
-# ══════════════════════════════════════════════════════════════════════════════
 DEFAULT_HORIZONS_STEPS  = (1, 2)                 # 15, 30 min (sprint scope)
 # Previously (1, 2, 4, 8, 12, 16) — restore for 4hr horizon evaluation later.
 DEFAULT_RAIN_THRESHOLDS = (1, 3, 6, 24)          # trace, light, moderate, heavy

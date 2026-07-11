@@ -1,27 +1,27 @@
-# src/eval/inference.py
-# Horizon Forecast — Multi-Step Auto-Regressive Inference (§6.1 feedback loop)
-# Authors: Or Mordechay Hod, Gilad Boudman | Braude College, CODE: 26-1-R-1
-#
-# Implements the auto-regressive forecast loop: each step's predicted cloud
-# IR frame is fed back as the next step's most-recent input frame, producing
-# T+15, T+30, T+45, T+60 min (or more) forecasts from a single 4-frame input.
-#
-# Channel layout in x (12 channels = 4 frames × [IR, WV, DEM]):
-#   ch 0-2  : t-45  [IR, WV, DEM]
-#   ch 3-5  : t-30  [IR, WV, DEM]
-#   ch 6-8  : t-15  [IR, WV, DEM]
-#   ch 9-11 : t-0   [IR, WV, DEM]  ← most recent
-#
-# Auto-regressive shift (per step):
-#   new_ir  = predicted cloud (y_cloud from model output)
-#   new_wv  = last observed WV (channel 10), held constant (no WV model)
-#   new_dem = DEM (channel 11), always static
-#   next_x  = concat(current_x[:, 3:], [new_ir, new_wv, new_dem])
-#
-# Usage:
-#   from src.eval.inference import run_multi_step_inference, run_inference_from_checkpoint
-#   preds = run_multi_step_inference(model, x, n_steps=4)
-#   # preds[i]["cloud"] = predicted cloud at T + (i+1)*15 min
+"""
+Multi-Step Auto-Regressive Inference (§6.1 feedback loop).
+
+Implements the auto-regressive forecast loop: each step's predicted cloud IR frame is fed
+back as the next step's most-recent input frame, producing T+15, T+30, T+45, T+60 min
+(or more) forecasts from a single 4-frame input.
+
+Channel layout in x (12 channels = 4 frames × [IR, WV, DEM]):
+  ch 0-2  : t-45  [IR, WV, DEM]
+  ch 3-5  : t-30  [IR, WV, DEM]
+  ch 6-8  : t-15  [IR, WV, DEM]
+  ch 9-11 : t-0   [IR, WV, DEM]  ← most recent
+
+Auto-regressive shift (per step):
+  new_ir  = predicted cloud (y_cloud from model output)
+  new_wv  = last observed WV (channel 10), held constant (no WV model)
+  new_dem = DEM (channel 11), always static
+  next_x  = concat(current_x[:, 3:], [new_ir, new_wv, new_dem])
+
+Usage:
+  from src.eval.inference import run_multi_step_inference, run_inference_from_checkpoint
+  preds = run_multi_step_inference(model, x, n_steps=4)
+  # preds[i]["cloud"] = predicted cloud at T + (i+1)*15 min
+"""
 
 from __future__ import annotations
 
@@ -56,7 +56,7 @@ def run_multi_step_inference(
         model    : HorizonForecastModel (already on device, eval mode)
         x        : (1, 12, 256, 256) input tensor on device
         n_steps  : number of 15-min steps to forecast ahead (default 4 = 60 min)
-        amp_dtype: bf16 for H100, fp16 for RTX 3070
+        amp_dtype: bf16 on Ampere+/H100, fp16 on older GPUs
 
     Returns:
         List of n_steps dicts, each containing CPU float32 tensors:
@@ -89,10 +89,10 @@ def run_multi_step_inference(
             "rain_probs": y_rain_logits.softmax(dim=1).float().cpu(),       # (1,64,H,W)
         })
 
-        # Build next input: shift history by one frame, append new predicted frame
+        # Build next input: shift history by one frame, append new predicted frame.
+        # Model predicts BOTH IR+WV (y_cloud is 2-ch), so feed both back. DEM static.
         new_frame = torch.cat([
-            y_cloud,                                   # (1, 1, H, W) predicted IR
-            current_x[:, last_wv_ch:last_wv_ch + 1],  # (1, 1, H, W) last WV (held)
+            y_cloud[:, 0:2],                           # (1, 2, H, W) predicted IR + WV
             current_x[:, last_dem_ch:last_dem_ch + 1], # (1, 1, H, W) DEM (static)
         ], dim=1)  # (1, 3, H, W)
 

@@ -1,0 +1,978 @@
+{
+  "models": {
+    "cascade": "Driver-First Cascade",
+    "ablation": "End-to-End (Ablation)"
+  },
+  "horizons": [
+    15,
+    30,
+    45,
+    60,
+    75,
+    90,
+    105,
+    120
+  ],
+  "cases": [
+    {
+      "id": "case1",
+      "idx": 50285,
+      "type": "Light \u00b7 best of both",
+      "label": "Scattered cells",
+      "time": "2025-12-08 03:45 UTC",
+      "caption": "Driver-First CSI 0.67 + SSIM 0.81 at T+15 \u2014 strong rain skill and crisp clouds; End-to-End ablation 0.",
+      "horizons": [
+        15,
+        30,
+        45,
+        60,
+        75,
+        90,
+        105,
+        120
+      ],
+      "metrics": {
+        "cascade": {
+          "15": {
+            "CSI": 0.667,
+            "SSIM": 0.812,
+            "RMSE_wind": 2.22,
+            "RMSE_temp": 3.03
+          },
+          "30": {
+            "CSI": 0.0,
+            "SSIM": 0.782,
+            "RMSE_wind": 2.2,
+            "RMSE_temp": 3.02
+          },
+          "45": {
+            "CSI": 0.0,
+            "SSIM": 0.716,
+            "RMSE_wind": 2.37,
+            "RMSE_temp": 3.08
+          },
+          "60": {
+            "CSI": 0.0,
+            "SSIM": 0.692,
+            "RMSE_wind": 2.54,
+            "RMSE_temp": 3.13
+          },
+          "75": {
+            "CSI": 0.0,
+            "SSIM": 0.661,
+            "RMSE_wind": 3.06,
+            "RMSE_temp": 3.13
+          },
+          "90": {
+            "CSI": 0.0,
+            "SSIM": 0.635,
+            "RMSE_wind": 3.17,
+            "RMSE_temp": 3.15
+          },
+          "105": {
+            "CSI": 0.0,
+            "SSIM": 0.598,
+            "RMSE_wind": 3.23,
+            "RMSE_temp": 3.52
+          },
+          "120": {
+            "CSI": 0.0,
+            "SSIM": 0.553,
+            "RMSE_wind": 3.17,
+            "RMSE_temp": 3.67
+          }
+        },
+        "ablation": {
+          "15": {
+            "CSI": 0.0,
+            "SSIM": 0.83,
+            "RMSE_wind": 2.58,
+            "RMSE_temp": 2.66
+          },
+          "30": {
+            "CSI": 0.0,
+            "SSIM": 0.788,
+            "RMSE_wind": 2.55,
+            "RMSE_temp": 2.67
+          },
+          "45": {
+            "CSI": 0.0,
+            "SSIM": 0.739,
+            "RMSE_wind": 2.26,
+            "RMSE_temp": 2.81
+          },
+          "60": {
+            "CSI": 0.0,
+            "SSIM": 0.731,
+            "RMSE_wind": 2.24,
+            "RMSE_temp": 2.94
+          },
+          "75": {
+            "CSI": 0.0,
+            "SSIM": 0.696,
+            "RMSE_wind": 2.66,
+            "RMSE_temp": 3.16
+          },
+          "90": {
+            "CSI": 0.0,
+            "SSIM": 0.674,
+            "RMSE_wind": 2.69,
+            "RMSE_temp": 3.27
+          },
+          "105": {
+            "CSI": 0.0,
+            "SSIM": 0.633,
+            "RMSE_wind": 2.77,
+            "RMSE_temp": 3.42
+          },
+          "120": {
+            "CSI": 0.0,
+            "SSIM": 0.585,
+            "RMSE_wind": 2.81,
+            "RMSE_temp": 3.52
+          }
+        }
+      }
+    },
+    {
+      "id": "case2",
+      "idx": 50295,
+      "type": "Moderate \u00b7 high both",
+      "label": "Morning rain",
+      "time": "2025-12-08 06:15 UTC",
+      "caption": "CSI 0.50 + SSIM 0.78 at T+15; ablation 0 \u2014 drivers decisive on this convective cell.",
+      "horizons": [
+        15,
+        30,
+        45,
+        60,
+        75,
+        90,
+        105,
+        120
+      ],
+      "metrics": {
+        "cascade": {
+          "15": {
+            "CSI": 0.5,
+            "SSIM": 0.785,
+            "RMSE_wind": 2.79,
+            "RMSE_temp": 2.4
+          },
+          "30": {
+            "CSI": 0.5,
+            "SSIM": 0.717,
+            "RMSE_wind": 2.83,
+            "RMSE_temp": 2.57
+          },
+          "45": {
+            "CSI": 0.0,
+            "SSIM": 0.574,
+            "RMSE_wind": 3.04,
+            "RMSE_temp": 2.09
+          },
+          "60": {
+            "CSI": 0.0,
+            "SSIM": 0.456,
+            "RMSE_wind": 3.06,
+            "RMSE_temp": 2.54
+          },
+          "75": {
+            "CSI": 0.0,
+            "SSIM": 0.393,
+            "RMSE_wind": 3.13,
+            "RMSE_temp": 2.98
+          },
+          "90": {
+            "CSI": 0.0,
+            "SSIM": 0.336,
+            "RMSE_wind": 3.16,
+            "RMSE_temp": 3.77
+          },
+          "105": {
+            "CSI": 0.0,
+            "SSIM": 0.328,
+            "RMSE_wind": 3.39,
+            "RMSE_temp": 2.68
+          },
+          "120": {
+            "CSI": 0.0,
+            "SSIM": 0.323,
+            "RMSE_wind": 3.53,
+            "RMSE_temp": 3.13
+          }
+        },
+        "ablation": {
+          "15": {
+            "CSI": 0.0,
+            "SSIM": 0.795,
+            "RMSE_wind": 3.17,
+            "RMSE_temp": 2.04
+          },
+          "30": {
+            "CSI": 0.0,
+            "SSIM": 0.73,
+            "RMSE_wind": 3.18,
+            "RMSE_temp": 2.25
+          },
+          "45": {
+            "CSI": 0.0,
+            "SSIM": 0.597,
+            "RMSE_wind": 3.24,
+            "RMSE_temp": 1.58
+          },
+          "60": {
+            "CSI": 0.0,
+            "SSIM": 0.491,
+            "RMSE_wind": 3.23,
+            "RMSE_temp": 1.86
+          },
+          "75": {
+            "CSI": 0.0,
+            "SSIM": 0.334,
+            "RMSE_wind": 3.14,
+            "RMSE_temp": 1.87
+          },
+          "90": {
+            "CSI": 0.0,
+            "SSIM": 0.242,
+            "RMSE_wind": 3.12,
+            "RMSE_temp": 2.1
+          },
+          "105": {
+            "CSI": 0.0,
+            "SSIM": 0.15,
+            "RMSE_wind": 3.19,
+            "RMSE_temp": 2.19
+          },
+          "120": {
+            "CSI": 0.0,
+            "SSIM": 0.1,
+            "RMSE_wind": 3.16,
+            "RMSE_temp": 2.15
+          }
+        }
+      }
+    },
+    {
+      "id": "case3",
+      "idx": 17235,
+      "type": "Heavy \u00b7 both catch it",
+      "label": "Frontal storm",
+      "time": "2024-12-27 22:45 UTC",
+      "caption": "Both models catch the rain \u2014 Driver-First better: CSI 0.36 vs ablation 0.30 at T+30 (SSIM 0.72). Shows the comparison is real.",
+      "horizons": [
+        15,
+        30,
+        45,
+        60,
+        75,
+        90,
+        105,
+        120
+      ],
+      "metrics": {
+        "cascade": {
+          "15": {
+            "CSI": 0.36,
+            "SSIM": 0.741,
+            "RMSE_wind": 2.39,
+            "RMSE_temp": 2.8
+          },
+          "30": {
+            "CSI": 0.357,
+            "SSIM": 0.725,
+            "RMSE_wind": 2.41,
+            "RMSE_temp": 2.77
+          },
+          "45": {
+            "CSI": 0.367,
+            "SSIM": 0.681,
+            "RMSE_wind": 2.57,
+            "RMSE_temp": 2.92
+          },
+          "60": {
+            "CSI": 0.269,
+            "SSIM": 0.656,
+            "RMSE_wind": 2.87,
+            "RMSE_temp": 3.11
+          },
+          "75": {
+            "CSI": 0.0,
+            "SSIM": 0.611,
+            "RMSE_wind": 2.68,
+            "RMSE_temp": 3.3
+          },
+          "90": {
+            "CSI": 0.0,
+            "SSIM": 0.567,
+            "RMSE_wind": 2.73,
+            "RMSE_temp": 3.66
+          },
+          "105": {
+            "CSI": 0.0,
+            "SSIM": 0.538,
+            "RMSE_wind": 2.57,
+            "RMSE_temp": 3.93
+          },
+          "120": {
+            "CSI": 0.0,
+            "SSIM": 0.483,
+            "RMSE_wind": 2.66,
+            "RMSE_temp": 4.66
+          }
+        },
+        "ablation": {
+          "15": {
+            "CSI": 0.0,
+            "SSIM": 0.775,
+            "RMSE_wind": 2.76,
+            "RMSE_temp": 2.95
+          },
+          "30": {
+            "CSI": 0.3,
+            "SSIM": 0.73,
+            "RMSE_wind": 2.76,
+            "RMSE_temp": 2.77
+          },
+          "45": {
+            "CSI": 0.217,
+            "SSIM": 0.695,
+            "RMSE_wind": 2.84,
+            "RMSE_temp": 3.2
+          },
+          "60": {
+            "CSI": 0.0,
+            "SSIM": 0.686,
+            "RMSE_wind": 2.75,
+            "RMSE_temp": 3.12
+          },
+          "75": {
+            "CSI": 0.043,
+            "SSIM": 0.644,
+            "RMSE_wind": 2.83,
+            "RMSE_temp": 3.88
+          },
+          "90": {
+            "CSI": 0.0,
+            "SSIM": 0.636,
+            "RMSE_wind": 2.77,
+            "RMSE_temp": 3.88
+          },
+          "105": {
+            "CSI": 0.0,
+            "SSIM": 0.608,
+            "RMSE_wind": 2.82,
+            "RMSE_temp": 4.36
+          },
+          "120": {
+            "CSI": 0.0,
+            "SSIM": 0.598,
+            "RMSE_wind": 2.7,
+            "RMSE_temp": 4.35
+          }
+        }
+      }
+    },
+    {
+      "id": "case4",
+      "idx": 22445,
+      "type": "Moderate \u00b7 strong skill",
+      "label": "Spring rain",
+      "time": "2025-02-20 06:30 UTC",
+      "caption": "CSI 0.60 at T+15 vs ablation 0 \u2014 large driver advantage.",
+      "horizons": [
+        15,
+        30,
+        45,
+        60,
+        75,
+        90,
+        105,
+        120
+      ],
+      "metrics": {
+        "cascade": {
+          "15": {
+            "CSI": 0.6,
+            "SSIM": 0.541,
+            "RMSE_wind": 1.94,
+            "RMSE_temp": 2.06
+          },
+          "30": {
+            "CSI": 0.071,
+            "SSIM": 0.502,
+            "RMSE_wind": 1.97,
+            "RMSE_temp": 1.91
+          },
+          "45": {
+            "CSI": 0.048,
+            "SSIM": 0.437,
+            "RMSE_wind": 1.96,
+            "RMSE_temp": 1.83
+          },
+          "60": {
+            "CSI": 0.0,
+            "SSIM": 0.422,
+            "RMSE_wind": 2.43,
+            "RMSE_temp": 2.02
+          },
+          "75": {
+            "CSI": 0.0,
+            "SSIM": 0.391,
+            "RMSE_wind": 2.49,
+            "RMSE_temp": 2.02
+          },
+          "90": {
+            "CSI": 0.0,
+            "SSIM": 0.365,
+            "RMSE_wind": 2.9,
+            "RMSE_temp": 1.91
+          },
+          "105": {
+            "CSI": 0.111,
+            "SSIM": 0.336,
+            "RMSE_wind": 3.27,
+            "RMSE_temp": 2.1
+          },
+          "120": {
+            "CSI": 0.0,
+            "SSIM": 0.322,
+            "RMSE_wind": 3.36,
+            "RMSE_temp": 2.7
+          }
+        },
+        "ablation": {
+          "15": {
+            "CSI": 0.0,
+            "SSIM": 0.596,
+            "RMSE_wind": 2.18,
+            "RMSE_temp": 2.22
+          },
+          "30": {
+            "CSI": 0.0,
+            "SSIM": 0.5,
+            "RMSE_wind": 2.18,
+            "RMSE_temp": 1.98
+          },
+          "45": {
+            "CSI": 0.0,
+            "SSIM": 0.427,
+            "RMSE_wind": 2.23,
+            "RMSE_temp": 2.03
+          },
+          "60": {
+            "CSI": 0.0,
+            "SSIM": 0.374,
+            "RMSE_wind": 2.14,
+            "RMSE_temp": 2.16
+          },
+          "75": {
+            "CSI": 0.0,
+            "SSIM": 0.32,
+            "RMSE_wind": 2.1,
+            "RMSE_temp": 2.19
+          },
+          "90": {
+            "CSI": 0.0,
+            "SSIM": 0.308,
+            "RMSE_wind": 2.18,
+            "RMSE_temp": 2.13
+          },
+          "105": {
+            "CSI": 0.0,
+            "SSIM": 0.258,
+            "RMSE_wind": 2.23,
+            "RMSE_temp": 2.03
+          },
+          "120": {
+            "CSI": 0.0,
+            "SSIM": 0.276,
+            "RMSE_wind": 2.15,
+            "RMSE_temp": 2.23
+          }
+        }
+      }
+    },
+    {
+      "id": "case5",
+      "idx": 52330,
+      "type": "Heavy \u00b7 clear win",
+      "label": "Heavy storm",
+      "time": "2025-12-29 11:00 UTC",
+      "caption": "Driver-First CSI 0.39 vs ablation 0.08 at T+45 \u2014 cascade ~5\u00d7 the ablation.",
+      "horizons": [
+        15,
+        30,
+        45,
+        60,
+        75,
+        90,
+        105,
+        120
+      ],
+      "metrics": {
+        "cascade": {
+          "15": {
+            "CSI": 0.333,
+            "SSIM": 0.574,
+            "RMSE_wind": 3.42,
+            "RMSE_temp": 2.09
+          },
+          "30": {
+            "CSI": 0.176,
+            "SSIM": 0.551,
+            "RMSE_wind": 3.56,
+            "RMSE_temp": 2.08
+          },
+          "45": {
+            "CSI": 0.389,
+            "SSIM": 0.496,
+            "RMSE_wind": 3.58,
+            "RMSE_temp": 1.81
+          },
+          "60": {
+            "CSI": 0.235,
+            "SSIM": 0.457,
+            "RMSE_wind": 3.43,
+            "RMSE_temp": 1.82
+          },
+          "75": {
+            "CSI": 0.0,
+            "SSIM": 0.426,
+            "RMSE_wind": 3.86,
+            "RMSE_temp": 2.08
+          },
+          "90": {
+            "CSI": 0.0,
+            "SSIM": 0.406,
+            "RMSE_wind": 3.91,
+            "RMSE_temp": 2.06
+          },
+          "105": {
+            "CSI": 0.0,
+            "SSIM": 0.377,
+            "RMSE_wind": 4.08,
+            "RMSE_temp": 2.17
+          },
+          "120": {
+            "CSI": 0.0,
+            "SSIM": 0.351,
+            "RMSE_wind": 3.69,
+            "RMSE_temp": 2.21
+          }
+        },
+        "ablation": {
+          "15": {
+            "CSI": 0.0,
+            "SSIM": 0.614,
+            "RMSE_wind": 3.24,
+            "RMSE_temp": 1.91
+          },
+          "30": {
+            "CSI": 0.154,
+            "SSIM": 0.565,
+            "RMSE_wind": 3.35,
+            "RMSE_temp": 2.02
+          },
+          "45": {
+            "CSI": 0.083,
+            "SSIM": 0.497,
+            "RMSE_wind": 3.64,
+            "RMSE_temp": 2.1
+          },
+          "60": {
+            "CSI": 0.0,
+            "SSIM": 0.49,
+            "RMSE_wind": 3.55,
+            "RMSE_temp": 2.25
+          },
+          "75": {
+            "CSI": 0.0,
+            "SSIM": 0.432,
+            "RMSE_wind": 3.58,
+            "RMSE_temp": 2.61
+          },
+          "90": {
+            "CSI": 0.0,
+            "SSIM": 0.417,
+            "RMSE_wind": 3.79,
+            "RMSE_temp": 2.86
+          },
+          "105": {
+            "CSI": 0.0,
+            "SSIM": 0.417,
+            "RMSE_wind": 3.84,
+            "RMSE_temp": 2.76
+          },
+          "120": {
+            "CSI": 0.0,
+            "SSIM": 0.427,
+            "RMSE_wind": 3.29,
+            "RMSE_temp": 3.1
+          }
+        }
+      }
+    },
+    {
+      "id": "case6",
+      "idx": 17270,
+      "type": "Heavy \u00b7 cascade ahead",
+      "label": "Frontal band",
+      "time": "2024-12-28 07:30 UTC",
+      "caption": "CSI 0.29 vs ablation 0.18 at T+30 \u2014 Driver-First ahead, ablation partial.",
+      "horizons": [
+        15,
+        30,
+        45,
+        60,
+        75,
+        90,
+        105,
+        120
+      ],
+      "metrics": {
+        "cascade": {
+          "15": {
+            "CSI": 0.048,
+            "SSIM": 0.695,
+            "RMSE_wind": 2.07,
+            "RMSE_temp": 2.47
+          },
+          "30": {
+            "CSI": 0.292,
+            "SSIM": 0.608,
+            "RMSE_wind": 2.31,
+            "RMSE_temp": 1.93
+          },
+          "45": {
+            "CSI": 0.294,
+            "SSIM": 0.465,
+            "RMSE_wind": 2.11,
+            "RMSE_temp": 2.29
+          },
+          "60": {
+            "CSI": 0.355,
+            "SSIM": 0.42,
+            "RMSE_wind": 2.22,
+            "RMSE_temp": 2.79
+          },
+          "75": {
+            "CSI": 0.037,
+            "SSIM": 0.372,
+            "RMSE_wind": 2.15,
+            "RMSE_temp": 3.16
+          },
+          "90": {
+            "CSI": 0.042,
+            "SSIM": 0.332,
+            "RMSE_wind": 2.36,
+            "RMSE_temp": 3.59
+          },
+          "105": {
+            "CSI": 0.04,
+            "SSIM": 0.285,
+            "RMSE_wind": 2.47,
+            "RMSE_temp": 4.79
+          },
+          "120": {
+            "CSI": 0.0,
+            "SSIM": 0.256,
+            "RMSE_wind": 2.61,
+            "RMSE_temp": 5.9
+          }
+        },
+        "ablation": {
+          "15": {
+            "CSI": 0.056,
+            "SSIM": 0.78,
+            "RMSE_wind": 2.56,
+            "RMSE_temp": 3.04
+          },
+          "30": {
+            "CSI": 0.176,
+            "SSIM": 0.677,
+            "RMSE_wind": 2.79,
+            "RMSE_temp": 2.29
+          },
+          "45": {
+            "CSI": 0.062,
+            "SSIM": 0.504,
+            "RMSE_wind": 2.47,
+            "RMSE_temp": 2.18
+          },
+          "60": {
+            "CSI": 0.0,
+            "SSIM": 0.444,
+            "RMSE_wind": 2.46,
+            "RMSE_temp": 2.31
+          },
+          "75": {
+            "CSI": 0.0,
+            "SSIM": 0.375,
+            "RMSE_wind": 2.37,
+            "RMSE_temp": 2.12
+          },
+          "90": {
+            "CSI": 0.0,
+            "SSIM": 0.35,
+            "RMSE_wind": 2.47,
+            "RMSE_temp": 2.2
+          },
+          "105": {
+            "CSI": 0.0,
+            "SSIM": 0.304,
+            "RMSE_wind": 2.43,
+            "RMSE_temp": 2.3
+          },
+          "120": {
+            "CSI": 0.0,
+            "SSIM": 0.277,
+            "RMSE_wind": 2.4,
+            "RMSE_temp": 2.51
+          }
+        }
+      }
+    },
+    {
+      "id": "case7",
+      "idx": 25175,
+      "type": "Moderate \u00b7 spring storm",
+      "label": "March storm",
+      "time": "2025-03-20 17:00 UTC",
+      "caption": "Different season \u2014 CSI 0.27 vs ablation 0.13 at T+30. Cascade roughly doubles the ablation.",
+      "horizons": [
+        15,
+        30,
+        45,
+        60,
+        75,
+        90,
+        105,
+        120
+      ],
+      "metrics": {
+        "cascade": {
+          "15": {
+            "CSI": 0.125,
+            "SSIM": 0.641,
+            "RMSE_wind": 1.96,
+            "RMSE_temp": 2.02
+          },
+          "30": {
+            "CSI": 0.267,
+            "SSIM": 0.626,
+            "RMSE_wind": 1.9,
+            "RMSE_temp": 2.04
+          },
+          "45": {
+            "CSI": 0.0,
+            "SSIM": 0.561,
+            "RMSE_wind": 1.81,
+            "RMSE_temp": 2.06
+          },
+          "60": {
+            "CSI": 0.0,
+            "SSIM": 0.567,
+            "RMSE_wind": 1.95,
+            "RMSE_temp": 1.92
+          },
+          "75": {
+            "CSI": 0.0,
+            "SSIM": 0.552,
+            "RMSE_wind": 2.28,
+            "RMSE_temp": 2.09
+          },
+          "90": {
+            "CSI": 0.0,
+            "SSIM": 0.548,
+            "RMSE_wind": 2.45,
+            "RMSE_temp": 2.02
+          },
+          "105": {
+            "CSI": 0.111,
+            "SSIM": 0.543,
+            "RMSE_wind": 2.16,
+            "RMSE_temp": 2.25
+          },
+          "120": {
+            "CSI": 0.0,
+            "SSIM": 0.553,
+            "RMSE_wind": 2.19,
+            "RMSE_temp": 2.4
+          }
+        },
+        "ablation": {
+          "15": {
+            "CSI": 0.0,
+            "SSIM": 0.683,
+            "RMSE_wind": 2.04,
+            "RMSE_temp": 2.29
+          },
+          "30": {
+            "CSI": 0.125,
+            "SSIM": 0.623,
+            "RMSE_wind": 2.02,
+            "RMSE_temp": 2.24
+          },
+          "45": {
+            "CSI": 0.0,
+            "SSIM": 0.579,
+            "RMSE_wind": 2.0,
+            "RMSE_temp": 2.27
+          },
+          "60": {
+            "CSI": 0.0,
+            "SSIM": 0.571,
+            "RMSE_wind": 2.0,
+            "RMSE_temp": 2.5
+          },
+          "75": {
+            "CSI": 0.0,
+            "SSIM": 0.539,
+            "RMSE_wind": 2.04,
+            "RMSE_temp": 2.5
+          },
+          "90": {
+            "CSI": 0.0,
+            "SSIM": 0.525,
+            "RMSE_wind": 1.91,
+            "RMSE_temp": 2.41
+          },
+          "105": {
+            "CSI": 0.0,
+            "SSIM": 0.499,
+            "RMSE_wind": 1.85,
+            "RMSE_temp": 2.47
+          },
+          "120": {
+            "CSI": 0.0,
+            "SSIM": 0.493,
+            "RMSE_wind": 1.83,
+            "RMSE_temp": 2.57
+          }
+        }
+      }
+    },
+    {
+      "id": "case8",
+      "idx": 48140,
+      "type": "Heavy \u00b7 close case",
+      "label": "Autumn rain",
+      "time": "2025-11-15 14:00 UTC",
+      "caption": "Close case \u2014 Driver-First 0.20 vs ablation 0.14 at T+15; cascade still ahead, ablation nearly matches.",
+      "horizons": [
+        15,
+        30,
+        45,
+        60,
+        75,
+        90,
+        105,
+        120
+      ],
+      "metrics": {
+        "cascade": {
+          "15": {
+            "CSI": 0.2,
+            "SSIM": 0.557,
+            "RMSE_wind": 2.0,
+            "RMSE_temp": 2.25
+          },
+          "30": {
+            "CSI": 0.152,
+            "SSIM": 0.542,
+            "RMSE_wind": 2.04,
+            "RMSE_temp": 2.0
+          },
+          "45": {
+            "CSI": 0.32,
+            "SSIM": 0.36,
+            "RMSE_wind": 2.0,
+            "RMSE_temp": 1.95
+          },
+          "60": {
+            "CSI": 0.188,
+            "SSIM": 0.374,
+            "RMSE_wind": 2.0,
+            "RMSE_temp": 2.36
+          },
+          "75": {
+            "CSI": 0.125,
+            "SSIM": 0.302,
+            "RMSE_wind": 1.82,
+            "RMSE_temp": 2.21
+          },
+          "90": {
+            "CSI": 0.135,
+            "SSIM": 0.28,
+            "RMSE_wind": 1.81,
+            "RMSE_temp": 2.13
+          },
+          "105": {
+            "CSI": 0.056,
+            "SSIM": 0.261,
+            "RMSE_wind": 1.75,
+            "RMSE_temp": 2.23
+          },
+          "120": {
+            "CSI": 0.051,
+            "SSIM": 0.208,
+            "RMSE_wind": 1.8,
+            "RMSE_temp": 2.23
+          }
+        },
+        "ablation": {
+          "15": {
+            "CSI": 0.143,
+            "SSIM": 0.579,
+            "RMSE_wind": 2.1,
+            "RMSE_temp": 1.85
+          },
+          "30": {
+            "CSI": 0.0,
+            "SSIM": 0.494,
+            "RMSE_wind": 2.3,
+            "RMSE_temp": 1.92
+          },
+          "45": {
+            "CSI": 0.083,
+            "SSIM": 0.327,
+            "RMSE_wind": 2.33,
+            "RMSE_temp": 2.02
+          },
+          "60": {
+            "CSI": 0.0,
+            "SSIM": 0.295,
+            "RMSE_wind": 2.28,
+            "RMSE_temp": 2.2
+          },
+          "75": {
+            "CSI": 0.1,
+            "SSIM": 0.179,
+            "RMSE_wind": 2.44,
+            "RMSE_temp": 2.65
+          },
+          "90": {
+            "CSI": 0.1,
+            "SSIM": 0.148,
+            "RMSE_wind": 2.47,
+            "RMSE_temp": 3.2
+          },
+          "105": {
+            "CSI": 0.0,
+            "SSIM": 0.074,
+            "RMSE_wind": 2.55,
+            "RMSE_temp": 3.1
+          },
+          "120": {
+            "CSI": 0.0,
+            "SSIM": 0.024,
+            "RMSE_wind": 2.35,
+            "RMSE_temp": 2.84
+          }
+        }
+      }
+    }
+  ]
+}

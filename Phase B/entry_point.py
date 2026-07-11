@@ -1,24 +1,18 @@
-﻿#!/usr/bin/env python
-# entry_point.py
-# Horizon Forecast - Local Training Entry Point (Windows PC)
-# Authors: Or Mordechay Hod, Gilad Boudman | Braude College, CODE: 26-1-R-1
-#
-# RTX A5000 (Ampere, 24GB) - PRIMARY local GPU (CUDA device 0):
-#   precision   = bf16
-#   batch_size  = 16
-#   grad_accum  = 2      (effective batch = 32)
-#   num_workers = 4      (validated stable on Windows; 8+ deadlock on pin_memory)
-#   use_compile = False  (Triton on Windows is fragile)
-#   device_id   = 0      (PyTorch logical 0 = A5000 on this machine)
-#
-# RTX 3070 (Ampere, 8GB) - FALLBACK (CUDA device 1):
-#   Pass: --device-id 1 --batch-size 2 --grad-accum 8 --precision fp16
-#
-# Usage:
-#   python entry_point.py                    # A5000 full training (defaults)
-#   python entry_point.py --smoke            # 2-epoch sanity check
-#   python entry_point.py --rollout-max 16   # push to 4h rollout (default 8 = 2h)
-#   python entry_point.py --no-cascade       # ablation: sever Stage1→Stage2 fusion
+#!/usr/bin/env python
+"""
+Training Entry Point (Phase B).
+
+Parses the training CLI, builds the dataloaders + model + Trainer, and runs training.
+Defaults target a single ~24 GB GPU (bf16, batch 16, grad-accum 2 = effective 32). On
+smaller GPUs lower --batch-size and use --precision fp16. num_workers defaults to 4
+(higher values can deadlock at pin_memory on Windows — raise only after validating).
+
+Usage:
+  python entry_point.py                    # full training (defaults)
+  python entry_point.py --smoke            # 2-epoch sanity check
+  python entry_point.py --rollout-max 16   # push to 4h rollout (default 8 = 2h)
+  python entry_point.py --no-cascade       # ablation: sever Stage1→Stage2 fusion
+"""
 
 import argparse
 import json
@@ -62,15 +56,16 @@ def main() -> int:
     parser.add_argument("--grad-accum", type=int, default=2)
     parser.add_argument("--num-workers", type=int, default=4,
                         help="DataLoader workers. 4 measured stable on Windows. "
-                             "8 and 12 hang at pin_memory in this environment; "
+                             "8 and 12 hang at pin_memory in this environment, "
                              "do not raise without validating end-to-end.")
     parser.add_argument("--max-epochs", type=int, default=100)
     parser.add_argument("--lr", type=float, default=2e-4)
     parser.add_argument("--ckpt-dir", default="checkpoints/")
     parser.add_argument("--device-id", type=int, default=0,
-                        help="CUDA device index. On this machine: 0=A5000 24GB, 1=RTX 3070 8GB.")
+                        help="CUDA device index (auto-falls back to the largest-VRAM GPU "
+                             "if the selected one has <16 GB).")
     parser.add_argument("--precision", choices=["bf16", "fp16"], default="bf16",
-                        help="bf16 for A5000/H100; fp16 for RTX 3070")
+                        help="bf16 on Ampere+/H100, fp16 on older GPUs")
     parser.add_argument("--rollout-max", type=int, default=8,
                         help="max rollout steps per train step (8=2h, 16=4h)")
     parser.add_argument("--ss-anneal-epochs", type=int, default=40,
@@ -97,19 +92,18 @@ def main() -> int:
     parser.add_argument("--resume-weights-only", action="store_true",
                         help="Load model weights from --resume-ckpt but reset epoch "
                              "counter and LR schedule to 1. Use for phase-transfer "
-                             "(e.g. H5 Phase1→Phase2) where checkpoint epoch should "
+                             "(e.g. Phase 1 → Phase 2 transfer) where checkpoint epoch should "
                              "not carry over.")
     parser.add_argument("--era5-path", default=None,
                         help="Path to era5_npy/ directory. If set, uses dense ERA5 "
                              "wind+temp as Stage1 supervision instead of sparse IMS stations.")
     parser.add_argument("--train-csv", default="data/processed/index_train.csv",
-                        help="Path to train index CSV. Pass index_train_subset.csv "
-                             "after running subsample_train.py to train on a smaller "
-                             "fraction (sprint-speed mode).")
-    # H5 two-phase frozen training
+                        help="Path to the training index CSV. Point at a smaller CSV "
+                             "(a subset of index_train.csv) to train on a fraction of the data.")
+    # Two-phase frozen training
     parser.add_argument("--freeze-stage", choices=["none", "mani", "encoder_phys"],
                         default="none",
-                        help="H5 two-phase: 'mani' freezes ManifestationHead (Phase 1 — "
+                        help="Two-phase frozen schedule: 'mani' freezes ManifestationHead (Phase 1 — "
                              "train encoder+phys_head only). 'encoder_phys' freezes "
                              "SimVPv2Encoder+PhysicsDriverHead (Phase 2 — train mani_head only).")
     parser.add_argument("--lambda-cloud",  type=float, default=None,
@@ -185,7 +179,7 @@ def main() -> int:
     if args.no_cascade:
         logger.warning("ABLATION MODE: --no-cascade ON. Drivers zeroed before ManifestationHead.")
 
-    # H5 two-phase freeze logic
+    # Two-phase freeze logic
     if args.freeze_stage == "mani":
         for p in model.mani_head.parameters():
             p.requires_grad_(False)
@@ -206,7 +200,7 @@ def main() -> int:
     else:
         logger.info(f"Model parameters: {model.n_params/1e6:.1f}M")
 
-    # Loss weights: CLI overrides take precedence; Phase 1 typically zeros cloud+rain,
+    # Loss weights: CLI overrides take precedence. Phase 1 typically zeros cloud+rain,
     # Phase 2 typically zeros thermo.
     lam_cloud  = args.lambda_cloud  if args.lambda_cloud  is not None else 1.0
     lam_rain   = args.lambda_rain   if args.lambda_rain   is not None else 0.5

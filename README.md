@@ -1,167 +1,137 @@
-# Horizon Forecast: Satellite Cloud IR Nowcasting Transformer Model
+# Horizon Forecast — Driver-First Cascade Nowcasting
 
-![Braude Logo](Phase%20-%20A/Images/braude_logo.png)
+> **Project Code:** 26-1-R-1
+> **Institution:** Braude College of Engineering — Software Engineering Department
+> **Students:** Or Mordechay Hod, Gilad Boudman
+> **Advisors:** Mrs. Elena Kramer, Dr. Dan Lemberg
 
-> **Project Code:** 26-1-R-1  
-> **Institution:** Braude College of Engineering  
-> **Department:** Software Engineering
+A deep-learning **nowcasting** system for Israel: from the last hour of weather-satellite
+imagery it forecasts the near future of **wind, temperature, cloud structure, and rain**
+over a 256×256 grid, in 15-minute steps.
 
----
+## The idea — Driver-First Cascade
 
-## 🌩️ Project Overview
-**Horizon Forecast** is a deep learning-based meteorological nowcasting system designed to predict short-term weather events (0-4 hours) with high spatiotemporal precision.
+Instead of mapping past satellite frames straight to future rain, the model first predicts the
+physical **drivers** of the weather (surface wind and temperature), then conditions a second
+stage on those drivers to predict the **clouds and rain** — *understand why the weather moves
+before predicting where it goes.*
 
-Unlike traditional AI models that treat weather forecasting as simple video prediction (resulting in "blurry" forecasts), this project utilizes a **Physics-Informed Cascaded Architecture**. By explicitly modeling the thermodynamic drivers (Wind & Temperature) before predicting the visual manifestation (Clouds & Rain), the model achieves sharper, physically consistent forecasts for the complex climatic region of Israel and the Eastern Mediterranean.
+We test this with a clean **ablation**: the same network with the driver link switched off
+(`--no-cascade`). On the strictly held-out test set (Jul 2024 – Dec 2025), the cascade beats
+the ablation on rain skill while cloud quality stays tied:
 
-![Blurry vs Sharp Comparison](Phase%20-%20A/Images/concept_comparison.jpg)
-*Figure 1: Conceptual comparison between standard MSE loss (Left) and our Physics-Informed approach (Right).*
+| Model (T+15) | Rain CSI | Heavy-rain CSI | Cloud SSIM |
+|---|---|---|---|
+| **Driver-First Cascade** | **0.135** | **0.114** | 0.81 |
+| End-to-End Ablation | 0.089 | 0.017 | 0.82 |
 
----
+The driver-first ordering improves rain CSI by **~52%** at every horizon. The low *absolute*
+CSI is a ground-truth-density limit (rain is verified only at ~100 sparse stations), not a
+model failure — the full analysis is in the project book.
 
-## 👥 The Team
-* **Students:**
-    * **Or Mordechay Hod**
-    * **Gilad Boudman**
-* **Advisors:**
-    * Mrs. Elena Kramer
-    * Dr. Dan Lemberg
+## Architecture (~30M params, `Phase B/src/models/model.py`)
 
----
+```
+input (B, 12, 256, 256)              4 frames × [IR, WV, DEM]
+  → SimVPv2 Encoder (gSTA blocks)    → shared latent representation
+  → Stage 1: PhysicsDriverHead       → wind + temperature (supervised by dense ERA5)
+  → Stage 2: ManifestationHead(latent, drivers)
+        ├ cloud head → IR + WV        (verified against dense satellite imagery)
+        └ rain head  → 64 intensity-class logits  (verified against sparse IMS stations)
+```
 
-## 🧠 System Architecture
-The system employs a **Cascaded Dual-Supervision Network**. It does not merely map past pixels to future pixels; it learns the *forces* driving the weather system.
+## Data
 
-![System Architecture](Phase%20-%20A/Images/architecture_diagram.jpg)
+| Source | Role |
+|---|---|
+| EUMETSAT SEVIRI (IR 10.8 µm + WV 6.2 µm) | model input (dense) |
+| NASA SRTM (elevation) | model input (static) |
+| ERA5 reanalysis (wind, temperature) | dense driver ground truth |
+| IMS stations (rain) | sparse rain ground truth |
 
-### The Two-Stage Inference Process:
-1.  **Stage 1 (The Physics Drivers):**
-    * **Input:** Latent features from the **SimVPv2 Encoder**.
-    * **Task:** Predicts the invisible thermodynamic state: **Surface Wind Speed** and **Temperature**.
-    * **Loss:** Masked MSE (Calculated only at active ground station coordinates).
-2.  **Stage 2 (The Manifestation):**
-    * **Input:** Fused tensor of Latent Visuals + Predicted Physics (from Stage 1).
-    * **Task:** Predicts **Cloud Structure** and **Rain Intensity**.
-    * **Innovation:** Uses **SaTformer** logic to classify rain into 64 probability buckets, preventing the "zero-inflation" problem.
+Grid: 29–34°N, 34–36°E. Splits: train 2020–2023, validation 2024 H1, held-out test
+2024-07 → 2025-12 (52,566 samples).
 
----
+## Poster
 
-## 🌍 Data Sources & Fusion
-We fuse three distinct geospatial layers into a unified tensor for training:
+<p align="center">
+  <a href="Phase%20B/documents/Capstone%20Project%20%E2%80%93%20Phase%202_26-1-R-1_Poster.pdf">
+    <img src="Phase%20B/documents/poster.png" alt="Horizon Forecast — project poster" width="480">
+  </a>
+</p>
 
-![Data Fusion Strategy](Phase%20-%20A/Images/data_fusion.jpg)
+<p align="center"><em>Click the poster for the full-resolution PDF.</em></p>
 
-* **🛰️ Top Layer (Dense Input):** EUMETSAT Meteosat Second Generation (MSG) Satellite Imagery.
-    * *Channels:* IR 10.8µm (Thermal) & WV 6.2µm (Water Vapor).
-* **📡 Middle Layer (Sparse Ground Truth):** IMS (Israel Meteorological Service) Ground Stations.
-    * *Data:* Rain Intensity, Wind Speed, Surface Temperature.
-* **🏔️ Bottom Layer (Static Context):** NASA SRTM Topography.
-    * *Purpose:* Provides orographic lift context (mountain effects on rain).
+## Repository layout
 
----
-
-## 🛠️ Technology Stack
-* **Core Engine:** Python 3.13, PyTorch 2.11 + CUDA 12.8
-* **Architecture:** SimVPv2 Encoder (gSTA blocks) + SaTformer-style classification head — implemented from scratch in raw PyTorch.
-* **Data Engineering:** EUMDAC (Satellite API), Pandas, PyArrow (Parquet), Rasterio, SciPy (DEM mosaic + zoom).
-* **Mixed Precision:** BF16 autocast on A5000/H100; FP16 + GradScaler fallback on consumer GPUs.
-* **Hardware Used:** NVIDIA RTX A5000 24GB (primary local training), RTX 3070 8GB (inference fallback).
-
----
-
-## 📅 Project Timeline
-The project development is divided into three strategic phases:
-
-![Project Timeline](Phase%20-%20A/Images/development_process.png)
-
-* **Phase A — Design:** Literature Review, Architecture Design, Mathematical Formulation. ✅ *Completed (Feb 2026)*
-* **Phase B — Data Engineering:** EUMETSAT/IMS synchronization, DEM mosaic, sample-index construction, normalization stats, rain-class weights. ✅ *Completed (May 2026)*
-* **Phase C — Model & Evaluation:** Training the Cascaded Dual-Supervision Network, ablation study (`--no-cascade`), per-horizon evaluation against persistence / optical-flow / climatology baselines, qualitative case studies. 🚧 *In progress (May–Jun 2026)*
-
----
-
-## 📁 Repository Structure
 ```
 Horizon Forecast/
-├── README.md                ← this file (project landing page)
-├── Phase - A/               ← Phase A book (PDF) + presentation + figures
-└── Phase B/                 ← Phase B + Phase C source code
-    ├── entry_point.py       ← main training CLI
-    ├── data_prep.py         ← data preparation CLI
-    ├── run_viz.py           ← inference + visualization CLI
+├── README.md            ← this file
+├── Phase A/             ← Phase A proposal book + figures
+└── Phase B/             ← the delivered system
+    ├── entry_point.py   ← training CLI
+    ├── run_viz.py       ← load a checkpoint → render a forecast dashboard
     ├── requirements.txt
-    └── src/
-        ├── data/    (dataset.py, prep.py)
-        ├── models/  (model.py — 30.1M params, gSTA + transformer)
-        ├── train/   (train.py — HorizonLoss, Trainer, FP16 inference loader)
-        ├── eval/    (evaluate.py, baselines.py, inference.py)
-        └── viz/     (visualize.py)
+    ├── src/             ← the package (data, models, train, eval, viz)
+    ├── scripts/         ← eval, weight export, demo builder, training launchers
+    ├── data/            ← data-download + preprocessing scripts, the 4 committed artifacts
+    ├── weights/         ← the two delivered models (FP16, driver_first.pt / end_to_end.pt)
+    ├── demo/            ← standalone offline viewer (.exe) + walkthrough video
+    ├── experiments/     ← neighborhood-CSI analysis
+    └── documents/       ← project book + poster (PDF) and poster.png
 ```
-Large directories (`data/raw/`, `data/processed/`, `checkpoints/`, `venv/`) are intentionally **not committed** — they are reproduced locally by running the data preparation and training pipelines.
 
----
+Large artifacts — `checkpoints/`, the heavy `data/` subdirectories, and `logs/` — are
+git-ignored and rebuilt locally.
 
-## 🚀 Getting Started
+## Quick start
 
-### Prerequisites
-* Python **3.13**
-* NVIDIA GPU with CUDA 12.x driver (RTX 3060+ / A5000 / H100 etc.)
-* ~50 GB free disk for raw + processed data, ~5 GB for venv
+Full instructions are in the project book (`Phase B/documents/`) — User Guide (Appendix A) and
+Maintenance Guide (Appendix B). In short, clone the repo and set up the environment from
+`Phase B/`:
 
-### 1. Clone and set up the virtual environment
 ```bash
 git clone https://github.com/Horizon-Forecast/Satellite-Cloud-IR-Nowcasting-Transformer-Model.git
-cd Satellite-Cloud-IR-Nowcasting-Transformer-Model/Phase\ B
-py -3.13 -m venv venv
-venv\Scripts\activate                      # Windows
-# source venv/bin/activate                 # Linux/macOS
-pip install torch --index-url https://download.pytorch.org/whl/cu128
+cd Satellite-Cloud-IR-Nowcasting-Transformer-Model/"Phase B"
+python -m venv venv
+venv\Scripts\activate                     # Windows (use source venv/bin/activate on Linux/macOS)
+pip install torch --index-url https://download.pytorch.org/whl/cu128   # match your CUDA driver
 pip install -r requirements.txt
 ```
 
-### 2. Provide the raw data
-The model requires three data sources under `Phase B/data/raw/`:
-* `IR_108 with WV_062 Tif (EUMETVIEW)/Raw/YYYYMM/*.tif` — EUMETSAT SEVIRI imagery (IR 10.8 µm + WV 6.2 µm)
-* `GroundTruth(IMS)/*.csv` — Israel Meteorological Service ground-station data
-* `ElevationData(NASA)/*.hgt` — NASA SRTM digital elevation model tiles
-* `stations_locations.csv` — IMS station GPS coordinates
+The two trained models ship in `weights/`. Reproduce the held-out test results (requires the
+processed dataset — rebuild it from the raw sources per Appendix B):
 
-### 3. Run the data preparation pipeline (one-time, ~30 min)
 ```bash
-python data_prep.py                   # runs all 10 steps; idempotent — safe to re-run
-python data_prep.py --steps verify    # just check artifacts
-```
-Produces `data/processed/` with the 256×256 DEM, station mask, per-timestamp IMS snapshots, train/val/test index CSVs, normalization stats, and rain-class weights.
-
-### 4. Train
-```bash
-python entry_point.py --device-id 0 --precision bf16 --rollout-max 16 --max-epochs 80
-```
-Important flags:
-* `--rollout-max 16`     — train all the way to the 4-hour autoregressive horizon (16 × 15 min)
-* `--no-cascade`         — **ablation mode**: zero the drivers fed to the Manifestation Head (research-question control run)
-* `--multihorizon-every 20` — every 20 epochs, run per-horizon evaluation (CSI/POD/FAR/SSIM at T+15, +30, +60, +120, +180, +240)
-* `--smoke`              — 2-epoch sanity check; runs the full pipeline end-to-end fast
-
-Checkpoints land under `Phase B/checkpoints/`:
-* `gpu0_best.pt`         — lowest single-step validation loss
-* `gpu0_best_rollout.pt` — best `0.5·SSIM@T+60 + 0.5·CSI@T+60` over the multi-horizon evaluations
-* `gpu0_epoch_XXXX.pt`   — every 5 epochs (resume point)
-
-### 5. Generate forecast visualizations
-```bash
-python run_viz.py --ckpt checkpoints/gpu0_best.pt --split val --n 5
-```
-Produces a multi-panel PNG per sample in `viz_output/`: input history, Stage 1 driver maps, Stage 2 cloud + rain predictions, ground-truth comparison.
-
-### 6. Standalone evaluation on the test set
-```bash
-python -m src.eval.evaluate    # multi-horizon × multi-threshold table
-python -m src.eval.baselines   # persistence, optical flow, climatology baselines
+python scripts/eval_all_test.py --sub 10000 --horizons 1,2,3,4,6,8
 ```
 
----
+Rebuild the processed dataset from raw downloads (after obtaining API keys — see Appendix B):
 
-## 🧪 Research Question
-> Does explicitly predicting thermodynamic atmospheric drivers (**Wind**, **Temperature**) in a first-stage cascade significantly improve the prediction of storm manifestation (**Clouds**, **Rain Intensity**) in the second stage — compared to end-to-end regression?
+```bash
+python -m src.data.prep
+```
 
-The codebase supports both training modes via the `--no-cascade` ablation flag. Phase C compares the two head-to-head and reports **per-horizon CSI / POD / FAR** at multiple rain-intensity thresholds, plus three reference baselines (Persistence, Farneback Optical Flow, Monthly Climatology).
+Retrain from scratch (two-phase frozen schedule, requires the processed dataset and a GPU —
+full commands and flags in Appendix B):
+
+```bash
+python entry_point.py --era5-path data/era5_npy --freeze-stage mani --lambda-cloud 0 --lambda-rain 0 --ckpt-dir checkpoints/phase1
+python entry_point.py --era5-path data/era5_npy --resume-ckpt checkpoints/phase1/gpu0_best.pt --resume-weights-only --freeze-stage encoder_phys --lambda-thermo 0 --lambda-cloud 1.0 --lambda-rain 0.5 --ckpt-dir checkpoints/phase2
+```
+
+## Demo
+
+- **Standalone offline viewer:** `Phase B/demo/dist/HorizonForecastDemo.exe` — a self-contained
+  Windows executable (no Python, no GPU) that steps through curated test cases, comparing the
+  Driver-First Cascade against the ablation across every lead time.
+- **Narrated walkthrough video:** [`Phase B/demo/video/Demo_Video.mp4`](Phase%20B/demo/video/Demo_Video.mp4).
+
+## Research question
+
+> Does explicitly predicting the thermodynamic drivers (wind, temperature) in a first-stage
+> cascade measurably improve rain nowcasting, compared to an otherwise identical end-to-end
+> model?
+
+Answered by the controlled `--no-cascade` ablation: on this data, yes — the driver-first
+ordering improves rain forecasting specifically (not the image as a whole), by ~52% CSI.

@@ -207,38 +207,86 @@ marimo/_lsp/
 __marimo__/
 
 # ════════════════════════════════════════════════════════════════════
-# Project-specific exclusions (Horizon Forecast)
+# Project-specific (Horizon Forecast) — single source of truth for the
+# whole repo (Phase A + Phase B). Merged from the former Phase B/.gitignore.
+# Ignore rules first, KEEP (!) negations grouped at the end so they win.
 # ════════════════════════════════════════════════════════════════════
 
-# Repo-root level
+# ── Tooling / local state ───────────────────────────────
 .claude/
+venv_wsl/
+
+# ── Raw source datasets (large; users re-download via Phase B/data/*.py) ──
 Datasets/
+
+# ── PDFs (deliverables carved back in via negations below) ──
 *.pdf
 
-# Phase B — data + training outputs (regenerated locally)
+# ── Large binaries anywhere (arrays, weights, checkpoints, archives) ──
+*.npy
+*.pt
+*.ckpt
+*.tar.zst
+
+# ── Phase B: data + training outputs (regenerated locally) ──
 Phase B/data/raw/
-Phase B/data/processed/
+Phase B/data/processed/*
+Phase B/data/era5/
+Phase B/data/era5_npy/
+Phase B/data/era5_precip/
+Phase B/data/era5_precip_npy/
 Phase B/data/tmp_cache/
 Phase B/checkpoints/
+Phase B/logs/
+Phase B/wandb/
 Phase B/viz_output/
 Phase B/eval_results/
-Phase B/wandb/
 
-# Phase B — author-marked private / non-shareable
-Phase B/Colab (ignore)/
-Phase B/Docs(NOT for upload)/
-Phase B/README.md
-Phase B/run_full.bat
-Phase B/sync_phone.bat
+# ── Phase B: intermediate render outputs (regenerated via scripts/) ──
+Phase B/scripts/figures/
+Phase B/experiments/*/out/
+Phase B/images/
 
-# Phase B — one-time diagnostic / migration scripts (historical only)
-Phase B/check_raw_tiles.py
-Phase B/patch_sat_voids.py
-Phase B/inpaint_sat_voids.py
-Phase B/recompute_norm_no_voids.py
-Phase B/bench_io.py
-Phase B/preflight.py
-Phase B/subsample_train.py
-Phase B/download_srtm.py
-Phase B/run_multihorizon.py
-Phase B/CLAUDE_CONTEXT.md
+# ── Phase B: demo build artifacts (assets are bundled into the shipped exe) ──
+Phase B/demo/build/
+Phase B/demo/assets/
+
+# ── Local reference archive (never uploaded) ───────────
+Phase B/archive/
+
+# ── Scratch / temp ──────────────────────────────────────
+scratch_*.png
+img_*b64.txt
+*.tmp.png
+backup_*/
+
+# ── OS / editor ─────────────────────────────────────────
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# ════════════════════════════════════════════════════════════════════
+# KEEP — negations (must follow every ignore rule above to take effect)
+# ════════════════════════════════════════════════════════════════════
+
+# Deliverable PDFs: Phase 1 & 2 books + poster (override the *.pdf ignore)
+!Books/*.pdf
+!Phase A/*.pdf
+!Phase B/documents/*.pdf
+
+# Tiny artifacts REQUIRED to load/run the model (<350 KB total)
+!Phase B/data/processed/norm_stats.json
+!Phase B/data/processed/station_mask.pt
+!Phase B/data/processed/dem_256.npy
+!Phase B/data/processed/rain_weights.pt
+
+# Delivered FP16 model weights (~58 MB each, under GitHub's 100 MB/file limit)
+!Phase B/weights/driver_first.pt
+!Phase B/weights/end_to_end.pt
+
+# Standalone demo executable — ship it so Appendix A.3 runs with zero setup (~67 MB).
+# Re-include the dir (beats the global dist/ rule), drop its contents, keep the exe.
+!Phase B/demo/dist/
+Phase B/demo/dist/*
+!Phase B/demo/dist/HorizonForecastDemo.exe

@@ -1,21 +1,21 @@
-# src/eval/baselines.py
-# Horizon Forecast — Per-Horizon Baselines (Phase B research-track)
-# Authors: Or Mordechay Hod, Gilad Boudman | Braude College, CODE: 26-1-R-1
-#
-# Baselines provide reference numbers the model must beat to claim research value.
-# Each baseline emits the SAME nested dict shape as evaluate_checkpoint_multihorizon():
-#   {horizon_min: {csi@thr, pod@thr, far@thr, hss@thr, ssim_cloud, cloud_mse, ...}}
-#
-# Baselines implemented:
-#   - persistence: cloud(T+k) = cloud(T+0); rain always class 0 (no skill)
-#   - optflow:     Farneback dense flow warps last IR forward; rain class 0
-#   - climatology: per-month modal rain class at each station from training years;
-#                  cloud = last observed IR (same as persistence for cloud)
-#
-# Usage:
-#   from src.eval.baselines import run_persistence_multihorizon, run_optflow_multihorizon
-#   results = run_persistence_multihorizon(val_loader)
-#   # results[60]['csi@1'] etc.
+"""
+Per-Horizon Baselines (Phase B research-track).
+
+Baselines provide reference numbers the model must beat to claim research value. Each
+baseline emits the SAME nested dict shape as evaluate_checkpoint_multihorizon():
+  {horizon_min: {csi@thr, pod@thr, far@thr, hss@thr, ssim_cloud, cloud_mse, ...}}
+
+Baselines implemented:
+  - persistence: cloud(T+k) = cloud(T+0), rain always class 0 (no skill)
+  - optflow:     Farneback dense flow warps last IR forward, rain class 0
+  - climatology: per-month modal rain class at each station from training years,
+                 cloud = last observed IR (same as persistence for cloud)
+
+Usage:
+  from src.eval.baselines import run_persistence_multihorizon, run_optflow_multihorizon
+  results = run_persistence_multihorizon(val_loader)
+  # results[60]['csi@1'] etc.
+"""
 
 from __future__ import annotations
 
@@ -107,9 +107,7 @@ def _score_batch_at_horizon(
     a["n_samples"] += Bv
 
 
-# ══════════════════════════════════════════════════════════════════════════════
 # Persistence baseline: no motion, no rain
-# ══════════════════════════════════════════════════════════════════════════════
 
 @torch.no_grad()
 def run_persistence_multihorizon(
@@ -164,9 +162,7 @@ def run_persistence_multihorizon(
     return results
 
 
-# ══════════════════════════════════════════════════════════════════════════════
 # Optical flow baseline (Farneback dense flow + warp)
-# ══════════════════════════════════════════════════════════════════════════════
 
 def _build_optflow_iterates(
     ir_t_minus_15: np.ndarray,
@@ -269,9 +265,7 @@ def run_optflow_multihorizon(
     return results
 
 
-# ══════════════════════════════════════════════════════════════════════════════
 # Climatology baseline: per-month modal rain class per station
-# ══════════════════════════════════════════════════════════════════════════════
 
 def build_climatology(
     parquet_dir:  str,
@@ -340,7 +334,7 @@ def run_climatology_multihorizon(
     out_path:         Optional[str] = None,
 ) -> Dict[int, Dict[str, float]]:
     """
-    Climatology: cloud = last observed (persistence-equivalent); rain class at each
+    Climatology: cloud = last observed (persistence-equivalent). Rain class at each
     station pixel = modal class for that station × month-of-year from training.
 
     Requires:
@@ -366,8 +360,8 @@ def run_climatology_multihorizon(
     n_mask = len(pixels)
     modal_aligned = np.zeros((12, n_mask), dtype=np.int16)
     for i, (_, _, sid) in enumerate(pixels):
-        # If pixels' sid order maps to modal's column order directly, use it;
-        # otherwise this would need a sid → index lookup. For simplicity here,
+        # If pixels' sid order maps to modal's column order directly, use it.
+        # Otherwise this would need a sid → index lookup. For simplicity here,
         # assume both share the same order (build_climatology used same csv).
         modal_aligned[:, i] = modal[:, i] if i < modal.shape[1] else 0
 
@@ -427,9 +421,7 @@ def run_climatology_multihorizon(
     return results
 
 
-# ══════════════════════════════════════════════════════════════════════════════
 # Legacy single-step wrapper (kept for back-compat with older callers)
-# ══════════════════════════════════════════════════════════════════════════════
 def run_baselines(val_loader, device=None) -> Dict[str, float]:
     """
     Single-horizon (T+15) persistence summary. Returns flat dict for callers

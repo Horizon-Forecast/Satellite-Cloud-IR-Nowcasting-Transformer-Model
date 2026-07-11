@@ -1,22 +1,23 @@
-# src/data/prep.py
-# Horizon Forecast — Data Preparation Pipeline (Phase B)
-# Authors: Or Mordechay Hod, Gilad Boudman | Braude College, CODE: 26-1-R-1
-#
-# Pure-function module. Each step is idempotent and resumable: re-running
-# a step skips work that is already on disk. Drivers (data_prep.ipynb on Colab
-# and data_prep_local.py locally) import these functions and run them in order.
-#
-# Pipeline stages (call in this order):
-#   1. fix_station_csv      raw/stations_locations.csv -> raw/ims_stations.csv
-#   2. build_dem            raw/ElevationData(NASA)    -> processed/dem_256.npy
-#   3. convert_sat_tifs     raw/IR_108 with WV_062 Tif -> processed/sat_npy/YYYYMM/*.npy
-#   4. merge_ims_to_parquet raw/GroundTruth(IMS)/*.csv -> processed/ims_parquet/ims_train_YYYY.parquet
-#   5. build_ims_snapshots  processed/ims_parquet      -> processed/ims_snapshots/YYYYMM/*.csv
-#   6. build_station_mask_step                         -> processed/station_mask.pt
-#   7. build_indices        processed/{sat_npy,ims_snapshots} -> processed/index_{train,val,test}.csv
-#   8. compute_norm_stats   processed/* -> processed/norm_stats.json
-#   9. compute_and_cache_rain_weights                  -> processed/rain_weights.pt
-#  10. verify_artifacts     processed/*
+"""
+Data Preparation Pipeline (Phase B).
+
+Pure-function module. Each step is idempotent and resumable: re-running a step skips work
+that is already on disk. Run the full pipeline with `python -m src.data.prep` (the __main__
+block calls run_all() over all stages), or import the individual stage functions and call
+them in order.
+
+Pipeline stages (call in this order):
+  1. fix_station_csv      raw/stations_locations.csv -> raw/ims_stations.csv
+  2. build_dem            raw/ElevationData(NASA)    -> processed/dem_256.npy
+  3. convert_sat_tifs     raw/IR_108 with WV_062 Tif -> processed/sat_npy/YYYYMM/*.npy
+  4. merge_ims_to_parquet raw/GroundTruth(IMS)/*.csv -> processed/ims_parquet/ims_train_YYYY.parquet
+  5. build_ims_snapshots  processed/ims_parquet      -> processed/ims_snapshots/YYYYMM/*.csv
+  6. build_station_mask_step                         -> processed/station_mask.pt
+  7. build_indices        processed/{sat_npy,ims_snapshots} -> processed/index_{train,val,test}.csv
+  8. compute_norm_stats   processed/* -> processed/norm_stats.json
+  9. compute_and_cache_rain_weights                  -> processed/rain_weights.pt
+ 10. verify_artifacts     processed/*
+"""
 
 from __future__ import annotations
 
@@ -47,9 +48,7 @@ from src.data.dataset import (
 )
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# Step 1 — Station CSV column rename
-# ══════════════════════════════════════════════════════════════════════════════
+# Station CSV column rename
 def fix_station_csv(raw_csv: str, out_csv: str) -> int:
     """
     Rename StationID/Latitude/Longitude → station_id/lat/lon and save.
@@ -74,9 +73,7 @@ def fix_station_csv(raw_csv: str, out_csv: str) -> int:
     return len(df)
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# Step 2 — SRTM DEM mosaic → 256×256 .npy
-# ══════════════════════════════════════════════════════════════════════════════
+# SRTM DEM mosaic → 256×256 .npy
 def _read_hgt(path: Path) -> np.ndarray:
     data = np.fromfile(str(path), dtype=">i2").astype(np.float32)
     n = int(round(data.size ** 0.5))
@@ -172,9 +169,7 @@ def build_dem(dem_dir: str, out_path: str) -> Dict:
     return {"shape": dem_256.shape, "min": float(dem_256.min()), "max": float(dem_256.max())}
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# Step 3 — Satellite TIF → .npy conversion
-# ══════════════════════════════════════════════════════════════════════════════
+# Satellite TIF → .npy conversion
 def _tif_to_npy(tif_path: Path, h: int = 256, w: int = 256) -> np.ndarray:
     """
     Read a SEVIRI TIF and return a (C, H, W) float32 array.
@@ -189,7 +184,30 @@ def _tif_to_npy(tif_path: Path, h: int = 256, w: int = 256) -> np.ndarray:
     from scipy.ndimage import zoom, distance_transform_edt
 
     with rasterio.open(tif_path) as src:
-        arr = src.read().astype(np.float32)
+        arr   = src.read().astype(np.float32)
+        descs = list(src.descriptions)  # e.g. ('band 09', 'band 05')
+
+    # Enforce consistent band order (channel 0 = IR_108, channel 1 = WV_062)
+    # BUG (found 2026-06-20): the EUMETVIEW 2-band GeoTIFFs alternate band order
+    # between frames — sometimes [IR, WV], sometimes [WV, IR] — and rasterio.read()
+    # trusts native order, so half of all frames had IR/WV swapped, corrupting every
+    # training sample's channel semantics.
+    # Correct identity (verified from TIF band descriptions): band 09 = IR 10.8µm,
+    # band 05 = WV 6.2µm. IR is the higher-mean, textured imagery. Order by the band
+    # description when available, fall back to higher-mean = IR.
+    if arr.shape[0] == 2:
+        ir_idx = None
+        for i, d in enumerate(descs):
+            if d and "09" in d:
+                ir_idx = i
+                break
+        if ir_idx is None:
+            v0 = arr[0][arr[0] > -999]; v1 = arr[1][arr[1] > -999]
+            m0 = float(v0.mean()) if v0.size else float(arr[0].mean())
+            m1 = float(v1.mean()) if v1.size else float(arr[1].mean())
+            ir_idx = 0 if m0 >= m1 else 1   # IR = higher mean
+        if ir_idx != 0:
+            arr = arr[::-1].copy()
 
     for ch in range(arr.shape[0]):
         plane = arr[ch]
@@ -317,9 +335,7 @@ def convert_sat_tifs(
     }
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# Step 4 — IMS station CSVs → per-year parquet (OOM-safe streaming)
-# ══════════════════════════════════════════════════════════════════════════════
+# IMS station CSVs → per-year parquet (OOM-safe streaming)
 _ID_RE = re.compile(r"_(\d+)\.csv$")
 
 
@@ -407,7 +423,7 @@ def merge_ims_to_parquet(
                 continue
 
             df = df.replace(-9999.0, np.nan)
-            # 10-minute reporting period after _1m_ filter; convert mm/10min → mm/hr
+            # 10-minute reporting period after _1m_ filter, convert mm/10min → mm/hr
             df["precipitation_mmhr"] = df["Rain"].clip(lower=0) * 6.0
             df["wind_speed_ms"]      = df["WS"].clip(lower=0)
             df["temperature_c"]      = df["TD"]
@@ -450,9 +466,7 @@ def merge_ims_to_parquet(
             "skipped_files": skipped, "years": years}
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# Step 5 — IMS snapshots (one CSV per 15-min target timestamp)
-# ══════════════════════════════════════════════════════════════════════════════
+# IMS snapshots (one CSV per 15-min target timestamp)
 def build_ims_snapshots(parquet_dir: str, out_dir: str) -> int:
     """
     Read each per-year parquet, round timestamps to 15min, group by timestamp+station,
@@ -506,9 +520,7 @@ def build_ims_snapshots(parquet_dir: str, out_dir: str) -> int:
     return total_ts
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# Step 6 — Station mask (delegates to dataset.build_station_mask)
-# ══════════════════════════════════════════════════════════════════════════════
+# Station mask (delegates to dataset.build_station_mask)
 def build_station_mask_step(stations_csv: str, out_path: str) -> int:
     """Wrap build_station_mask for use from prep drivers. Idempotent."""
     out = Path(out_path)
@@ -523,9 +535,7 @@ def build_station_mask_step(stations_csv: str, out_path: str) -> int:
     return n
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# Step 7 — Build train/val/test index CSVs
-# ══════════════════════════════════════════════════════════════════════════════
+# Build train/val/test index CSVs
 def build_indices(
     sat_npy_root: str,
     snap_root:    str,
@@ -655,9 +665,7 @@ def build_indices(
     return counts
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# Step 8 — Normalization stats (for entry_point.py NORM_STATS)
-# ══════════════════════════════════════════════════════════════════════════════
+# Normalization stats (for entry_point.py NORM_STATS)
 def compute_norm_stats(
     index_train: str,
     parquet_dir: str,
@@ -736,9 +744,7 @@ def compute_norm_stats(
     return stats
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# Step 9 — Cache rain class weights
-# ══════════════════════════════════════════════════════════════════════════════
+# Cache rain class weights
 def compute_and_cache_rain_weights(parquet_dir: str, out_path: str) -> torch.Tensor:
     """
     Compute 64-bin class weights from IMS training years (2020-2023) and cache.
@@ -769,9 +775,7 @@ def compute_and_cache_rain_weights(parquet_dir: str, out_path: str) -> torch.Ten
     return weights
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# Step 10 — Verification
-# ══════════════════════════════════════════════════════════════════════════════
+# Verification
 REQUIRED_ARTIFACTS = [
     "data/processed/dem_256.npy",
     "data/processed/station_mask.pt",
@@ -895,9 +899,7 @@ def verify_artifacts(processed_root: str = "data/processed",
     logger.info("[verify] all required artifacts present")
 
 
-# ══════════════════════════════════════════════════════════════════════════════
 # Convenience: run all steps
-# ══════════════════════════════════════════════════════════════════════════════
 def run_all(
     project_root: str = ".",
     skip_test: bool = False,
@@ -958,3 +960,23 @@ def run_all(
     )
     verify_artifacts(str(processed), require_test=not skip_test)
     return summary
+
+
+if __name__ == "__main__":
+    import argparse
+
+    logging.basicConfig(
+        level=logging.INFO, format="%(asctime)s  %(levelname)s  %(message)s", datefmt="%H:%M:%S"
+    )
+    ap = argparse.ArgumentParser(
+        description="Rebuild the processed dataset from data/raw/ (runs all ten stages in order)."
+    )
+    ap.add_argument("--project-root", default=".",
+                    help="Repo root containing data/raw and data/processed (default: current dir).")
+    ap.add_argument("--skip-test", action="store_true",
+                    help="Skip building the held-out test index.")
+    _args = ap.parse_args()
+    _summary = run_all(project_root=_args.project_root, skip_test=_args.skip_test)
+    print("\nDone. Stage summary:")
+    for _k, _v in _summary.items():
+        print(f"  {_k}: {_v}")

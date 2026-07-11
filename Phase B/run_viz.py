@@ -1,17 +1,17 @@
 #!/usr/bin/env python
-# run_viz.py
-# Horizon Forecast — Standalone Inference + Visualization
-# Authors: Or Mordechay Hod, Gilad Boudman | Braude College, CODE: 26-1-R-1
-#
-# Loads a trained checkpoint, runs inference on N samples from val or test set,
-# saves one PNG per sample to viz_output/.
-#
-# Usage:
-#   python run_viz.py                                       # best.pt, 5 val samples
-#   python run_viz.py --ckpt checkpoints/gpu0_best.pt --n 10
-#   python run_viz.py --split test --n 3
-#   python run_viz.py --ckpt checkpoints/gpu0_best_rollout.pt --n 5
-#   python run_viz.py --ckpt checkpoints/gpu0_epoch_0080.pt --n 1
+"""
+Standalone Inference + Visualization.
+
+Loads a trained checkpoint, runs inference on N samples from the val or test set, and
+saves one PNG per sample to viz_output/.
+
+Usage:
+  python run_viz.py                                       # best.pt, 5 val samples
+  python run_viz.py --ckpt checkpoints/gpu0_best.pt --n 10
+  python run_viz.py --split test --n 3
+  python run_viz.py --ckpt checkpoints/gpu0_best_rollout.pt --n 5
+  python run_viz.py --ckpt checkpoints/gpu0_epoch_0080.pt --n 1
+"""
 
 import argparse
 import json
@@ -97,16 +97,20 @@ def main() -> None:
     dem_tensor = torch.from_numpy(dem_arr).unsqueeze(0)
 
     for i, idx in enumerate(indices):
+        # The dataset normalizes the band order to IR=channel 0 by default,
+        # correcting the alternating IR/WV swap in the raw EUMETVIEW TIFs and
+        # matching the layout the delivered checkpoints were trained on. Both the
+        # model input and the display below therefore use consistent channels.
         sample = ds[idx]
         x          = sample["x"].unsqueeze(0).to(args.device)
-        # Dataset is rollout-format: y_sat=(T,2,H,W), y_rain=(T,H,W). Use step 0.
-        true_cloud = sample["y_sat"][0, 0:1]   # (1, H, W) - IR ch, step 0
         true_rain  = sample["y_rain"][0]       # (H, W)    - rain class, step 0
         timestamp  = ds.index.iloc[idx]["timestamp"]
 
         with torch.no_grad():
             with autocast(args.device, dtype=amp_dtype):
                 drivers, y_cloud_pred, y_rain_logits = model(x)
+
+        true_cloud = sample["y_sat"][0, 0:1]   # (1, H, W) IR, step 0
 
         save_path = out_dir / f"{args.split}_{idx:06d}.png"
         fig = visualize_forecast(

@@ -1,9 +1,10 @@
-# src/train/train.py
-# Horizon Forecast — H100-Optimized Training Loop (Phase C)
-# Authors: Or Mordechay Hod, Gilad Boudman  |  Braude College, CODE: 26-1-R-1
-#
-# Optimized for:  Google Colab H100 80GB (primary training)
-# Inference on:   NVIDIA RTX 3070 8GB     (local deployment)
+"""
+Two-Phase Training Loop (Phase B).
+
+Trainer for the two-phase frozen schedule: mixed-precision (bf16/fp16) autoregressive
+rollout with scheduled sampling, cosine LR, checkpointing, and periodic multi-horizon eval.
+Also exposes load_model_for_inference() used by the eval / visualization tools.
+"""
 
 import logging
 import math
@@ -40,9 +41,7 @@ def _ssim_simple(pred: torch.Tensor, target: torch.Tensor) -> float:
     return float((num / den.clamp(min=1e-8)).clamp(0, 1).item())
 
 
-# ══════════════════════════════════════════════════════════════════════════════
 # Multi-Objective Loss (§6.6 eq. 2-5)
-# ══════════════════════════════════════════════════════════════════════════════
 class HorizonLoss(nn.Module):
     """
     L_total = λ_cloud * L_cloud  +  λ_wind * L_wind  +  λ_temp * L_temp  +  λ_rain * L_rain
@@ -51,19 +50,21 @@ class HorizonLoss(nn.Module):
                       Acts as spatial consistency constraint — forces cloud motion
                       to follow physically valid fluid flow patterns.
 
-    L_wind   (eq. 4a): Masked MSE at IMS station pixels — wind channel only (drivers[:,0]).
-                       Wind is primary physics driver for cloud formation. Kept strong.
+    L_wind   (eq. 4a): wind channel (drivers[:,0]). Masked MSE at IMS station pixels by
+                       default, DENSE full-grid MSE when an ERA5 grid is supplied
+                       (era5_dense, Phase B). Wind is the primary driver — kept strong.
 
-    L_temp   (eq. 4b): Masked MSE at IMS station pixels — temp channel only (drivers[:,1]).
-                       Temperature less critical for rain detection. Eased in H3.
+    L_temp   (eq. 4b): temp channel (drivers[:,1]). Same sparse/dense logic as L_wind.
+                       Temperature is less critical for rain detection, so weighted lower.
 
-    L_rain   (eq. 5): Class-Weighted Cross-Entropy at IMS station pixels.
-                      64-bin classification (SaTformer logic) with extreme weights
-                      on rain classes to counter 98.84% dry-class dominance.
+    L_rain   (eq. 5): 64-bin class-weighted cross-entropy at IMS station pixels, with
+                      extreme weights on rain classes to counter 98.84% dry dominance.
 
-    H3 weights (λ_cloud=1.0, λ_wind=1.0, λ_temp=0.2, λ_rain=0.5):
-      Split thermo supervision: wind kept strong (primary driver),
-      temp eased (less critical for rain). Addresses H2 Stage1 instability.
+    The thermo supervision density is selected per-batch from the dataset flag
+    `era5_dense` — see forward().
+
+    Split-thermo weights (e.g. λ_cloud=1.0, λ_wind=1.0, λ_temp=0.2, λ_rain=0.5) keep wind
+    strong (the primary driver) and ease temp (less critical for rain detection).
     """
 
     def __init__(
@@ -72,14 +73,14 @@ class HorizonLoss(nn.Module):
         lambda_cloud:  float = 1.0,
         lambda_thermo: float = 0.5,   # legacy param — ignored if lambda_wind/lambda_temp set
         lambda_rain:   float = 2.0,
-        lambda_wind:   float = None,  # H3: split wind supervision (None = use lambda_thermo)
-        lambda_temp:   float = None,  # H3: split temp supervision (None = use lambda_thermo)
+        lambda_wind:   float = None,  # split wind supervision (None = use lambda_thermo)
+        lambda_temp:   float = None,  # split temp supervision (None = use lambda_thermo)
     ):
         super().__init__()
         self.masked_mse    = MaskedMSELoss()
         self.lambda_cloud  = lambda_cloud
         self.lambda_rain   = lambda_rain
-        # H3 split-thermo mode: separate wind/temp lambdas
+        # split-thermo mode: separate wind/temp lambdas
         if lambda_wind is not None and lambda_temp is not None:
             self.lambda_wind   = lambda_wind
             self.lambda_temp   = lambda_temp
@@ -100,6 +101,18 @@ class HorizonLoss(nn.Module):
         batch: Dict[str, torch.Tensor],
         preds: Tuple[torch.Tensor, torch.Tensor, torch.Tensor],
     ) -> Dict[str, torch.Tensor]:
+        """
+        Compute the multi-objective training loss for one batch.
+
+        Combines three weighted terms and returns them plus the total:
+          L_cloud  — dense MSE on the predicted IR+WV cloud field.
+          L_thermo — wind/temp driver loss: dense full-grid MSE when ERA5 is loaded,
+                     else sparse masked MSE at IMS station pixels (Phase-A regime).
+          L_rain   — class-weighted cross-entropy over 64 rain buckets at station pixels.
+        Weighting is set by the lambda_* fields. A frozen stage contributes a zero term.
+
+        Returns a dict with each component and `total` (the value to backprop).
+        """
         drivers, y_cloud_pred, y_rain_logits = preds
 
         y_cloud  = batch["y_cloud"]       # (B, 1, H, W)
@@ -114,6 +127,7 @@ class HorizonLoss(nn.Module):
         # ERA5 mode: dense full-grid MSE (no mask needed — every pixel has ground truth)
         # IMS mode: sparse masked MSE — station pixels only
         era5_dense = batch.get("era5_dense", False)  # True when ERA5 loaded
+        if isinstance(era5_dense, torch.Tensor): era5_dense = bool(era5_dense.any())
         if self._split_thermo:
             if era5_dense:
                 l_wind = F.mse_loss(drivers[:, 0:1], y_thermo[:, 0:1])
@@ -128,9 +142,9 @@ class HorizonLoss(nn.Module):
             else:
                 l_thermo = self.masked_mse(drivers, y_thermo, mask)
 
-        # L_rain: sparse class-weighted CE — station pixels only
-        # Mask flattening: select only active station pixels before CE computation
+        # L_rain: class-weighted CE at IMS station pixels only.
         B, C, H, W = y_rain_logits.shape
+        # Mask flattening: select only active station pixels before CE computation
         logits_flat = y_rain_logits.permute(0, 2, 3, 1).reshape(-1, C)  # (B*H*W, 64)
         target_flat = y_rain.reshape(-1)                                   # (B*H*W,)
         mask_flat   = mask.reshape(-1)                                     # (B*H*W,) bool
@@ -139,11 +153,7 @@ class HorizonLoss(nn.Module):
         active_target = target_flat[mask_flat]   # (N_active,)
 
         if active_logits.numel() > 0:
-            l_rain = F.cross_entropy(
-                active_logits,
-                active_target,
-                weight=self.rain_weights,
-            )
+            l_rain = F.cross_entropy(active_logits, active_target, weight=self.rain_weights)
         else:
             # Rare edge case: batch has no station pixels (e.g., all masked out)
             l_rain = y_rain_logits.sum() * 0.0  # zero loss, keeps compute graph alive
@@ -170,37 +180,21 @@ class HorizonLoss(nn.Module):
         }
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# H100-Optimized Trainer
-# ══════════════════════════════════════════════════════════════════════════════
+# Trainer
 class Trainer:
     """
-    Training orchestrator for Horizon Forecast on Google Colab H100 80GB.
+    Training orchestrator for Horizon Forecast.
 
-    H100 Optimizations Applied:
-    ┌─────────────────────────────────────────────────────────────────────────┐
-    │ BF16 precision      │ Native H100 BF16 tensor cores. No GradScaler     │
-    │                     │ needed. Better numeric stability than FP16.       │
-    │                     │ ~2× throughput over FP32.                         │
-    ├─────────────────────────────────────────────────────────────────────────┤
-    │ torch.compile       │ Fuses ops, eliminates Python overhead.            │
-    │ mode=reduce-overhead│ ~30-40% throughput gain after 1st epoch warmup.   │
-    │                     │ First epoch slower (compilation phase).            │
-    ├─────────────────────────────────────────────────────────────────────────┤
-    │ Fused AdamW         │ Single CUDA kernel per param group on H100.       │
-    ├─────────────────────────────────────────────────────────────────────────┤
-    │ Gradient accum x2   │ Effective batch 32 from B=16 batches.             │
-    │                     │ B=16 at BF16 ≈ 18GB VRAM → 22% of 80GB.         │
-    │                     │ Scale to B=32-64 if throughput bottlenecked.      │
-    ├─────────────────────────────────────────────────────────────────────────┤
-    │ Cosine LR + warmup  │ 5-epoch linear warmup → cosine decay to 0.       │
-    ├─────────────────────────────────────────────────────────────────────────┤
-    │ allow_tf32          │ TF32 for matmul and cuDNN ops on Ampere+.         │
-    └─────────────────────────────────────────────────────────────────────────┘
+    Performance choices:
+      - Mixed precision: bf16 (no GradScaler, wider exponent range, ~2× over FP32) or
+        fp16 (with loss scaling).
+      - Optional torch.compile: fuses ops, ~30-40% throughput after a first warmup epoch.
+      - Fused AdamW and TF32 matmul/cuDNN on Ampere+.
+      - Gradient accumulation for a larger effective batch than fits in a single step.
+      - Cosine LR with linear warmup.
 
-    RTX 3070 Inference Strategy:
-      Checkpoint saves ONLY model state_dict (no optimizer, no compiled wrapper).
-      load_model_for_inference() loads FP16 weights: ~200MB → fits 8GB easily.
+    Checkpoints store only the model state_dict (no optimizer, no torch.compile wrapper), so
+    load_model_for_inference() can restore them on any device (including CPU) at FP16.
     """
 
     def __init__(
@@ -216,7 +210,7 @@ class Trainer:
         warmup_epochs: int   = 5,
         ckpt_dir:      str   = "checkpoints/",
         use_compile:   bool  = True,
-        precision:     str   = "bf16",   # "bf16" (H100) or "fp16" (RTX 3070)
+        precision:     str   = "bf16",   # "bf16" (Ampere+/H100) or "fp16" (older GPUs)
         ckpt_prefix:    str   = "",        # filename prefix for multi-device runs
         use_wandb:      bool  = False,
         wandb_project:  str   = "horizon-forecast",
@@ -226,8 +220,8 @@ class Trainer:
         station_pixels: Optional[list] = None,
         viz_every:      int   = 10,
         eval_every:     int   = 10,
-        multihorizon_every: int = 0,   # 0 = disabled; N = run per-horizon eval every N epochs
-        # ── Scheduled-sampling rollout params ──────────────────────────────
+        multihorizon_every: int = 0,   # 0 = disabled. N = run per-horizon eval every N epochs
+        # Scheduled-sampling rollout params
         rollout_max:         int   = 8,    # max rollout steps (8 × 15min = 2h, grows to T_ROLLOUT)
         ss_anneal_epochs:    int   = 40,   # epochs to anneal ss_prob from 1.0 → ss_min
         ss_min:              float = 0.1,  # floor for scheduled-sampling real-frame probability
@@ -244,7 +238,7 @@ class Trainer:
         self.ckpt_dir.mkdir(parents=True, exist_ok=True)
         self.ckpt_prefix = ckpt_prefix
 
-        # GPU performance flags (apply on Ampere+ — covers H100 and RTX 3070)
+        # GPU performance flags (Ampere+)
         torch.backends.cuda.matmul.allow_tf32 = True
         torch.backends.cudnn.allow_tf32        = True
         torch.backends.cudnn.benchmark         = True
@@ -261,7 +255,7 @@ class Trainer:
         self.val_loader   = val_loader
 
         # fused AdamW available on Ampere+ (H100, A100, RTX 30/40 series)
-        # Only optimize unfrozen params — freeze_stage support for H5 two-phase training.
+        # Only optimize unfrozen params — supports the two-phase frozen schedule (freeze_stage).
         trainable_params = [p for p in self.model.parameters() if p.requires_grad]
         self.optimizer = torch.optim.AdamW(
             trainable_params,
@@ -279,8 +273,8 @@ class Trainer:
         )
 
         # Precision selection:
-        #   bf16 — H100 native, wider exponent range, no GradScaler needed
-        #   fp16 — RTX 3070 fastest tensor cores, requires loss scaling
+        #   bf16 — wider exponent range, no GradScaler needed (Ampere+/H100)
+        #   fp16 — fastest on older tensor cores, requires loss scaling
         self.precision = precision
         if precision == "bf16":
             self.amp_dtype = torch.bfloat16
@@ -336,6 +330,7 @@ class Trainer:
             self._resume(resume_ckpt)
 
     def _resume(self, ckpt_path: str) -> None:
+        """Restore model (and, unless weights-only phase-transfer, optimizer/scheduler/epoch) from a checkpoint."""
         ckpt = torch.load(ckpt_path, map_location=self.device, weights_only=True)
         raw_model = getattr(self.model, "_orig_mod", self.model)
         raw_model.load_state_dict(ckpt["model_state"])
@@ -368,6 +363,7 @@ class Trainer:
         return 0.5 * (1.0 + math.cos(math.pi * progress))
 
     def _to_device(self, batch: Dict) -> Dict:
+        """Move every tensor in the batch to the training device (async, pinned-memory transfer)."""
         return {k: v.to(self.device, non_blocking=True) for k, v in batch.items()}
 
     def _ss_prob(self, epoch: int) -> float:
@@ -396,14 +392,18 @@ class Trainer:
 
     def _step_batch(self, batch: Dict, step: int) -> Dict:
         """Extract single-step targets from multi-step batch for loss computation."""
-        return {
+        sb = {
             "y_cloud":      batch["y_sat"][:, step],       # (B, 2, H, W)
             "y_thermo":     batch["y_thermo"][:, step],    # (B, 2, H, W)
             "station_mask": batch["station_mask"],          # (B, H, W)
             "y_rain":       batch["y_rain"][:, step],       # (B, H, W)
+            "era5_dense":   batch.get("era5_dense", False),  # forward dense-thermo flag to the loss
         }
+        return sb
 
     def _train_epoch(self, epoch: int) -> Dict[str, float]:
+        """Run one training epoch: forward/loss/backward with grad accumulation, scheduled-sampling
+        rollout, and BF16 autocast. Returns the epoch-averaged loss components."""
         self.model.train()
         sums = {"total": 0.0, "cloud": 0.0, "thermo": 0.0, "rain": 0.0}
         t0   = time.perf_counter()
@@ -526,6 +526,8 @@ class Trainer:
 
     @torch.no_grad()
     def _val_epoch(self, epoch: int) -> float:
+        """Run one validation epoch (no grad, eval mode) and return the averaged loss components
+        used for best-checkpoint selection."""
         self.model.eval()
         sums = {"total": 0.0, "cloud": 0.0, "thermo": 0.0, "rain": 0.0}
         # IMS monitoring accumulators (ERA5 mode only)
@@ -596,7 +598,7 @@ class Trainer:
         """
         Save only model state_dict — NOT the torch.compile wrapper.
         The _orig_mod unwrap ensures the checkpoint loads on any device
-        (RTX 3070, CPU) without requiring torch.compile to be available.
+        (GPU or CPU) without requiring torch.compile to be available.
         """
         raw_model = getattr(self.model, "_orig_mod", self.model)
         ckpt = {
@@ -742,6 +744,7 @@ class Trainer:
         )
 
     def _log_metrics_csv(self, epoch: int, train: Dict, val: Dict, lr: float) -> None:
+        """Append this epoch's train/val loss components and learning rate to ckpt_dir/metrics.csv."""
         path = self.ckpt_dir / "metrics.csv"
         write_header = not path.exists()
         with open(path, "a") as f:
@@ -758,6 +761,8 @@ class Trainer:
             )
 
     def _run_eval_metrics(self, epoch: int) -> None:
+        """Periodically run multi-horizon skill evaluation (CSI/SSIM/POD/FAR) and log it — the
+        CSI here, not val loss, is what we select the final checkpoint on."""
         from src.eval.evaluate import evaluate_checkpoint
         station_mask = getattr(self.val_loader.dataset, "station_mask", None)
         if station_mask is None:
@@ -863,6 +868,7 @@ class Trainer:
             )
 
     def _make_ckpt(self, epoch: int, val_loss: float, rollout_score: float = float("nan")) -> Dict:
+        """Assemble the checkpoint dict (model/optimizer/scheduler state, epoch, scores, model config) for saving."""
         raw_model = getattr(self.model, "_orig_mod", self.model)
         return {
             "epoch":         epoch,
@@ -878,6 +884,12 @@ class Trainer:
         }
 
     def train(self) -> None:
+        """
+        Main training loop: for each epoch run train + validation, step the scheduler, log
+        metrics, and checkpoint. Saves the best model by validation loss and (when enabled)
+        runs periodic multi-horizon CSI evaluation. Frees CUDA cache between phases to stay
+        under the VRAM cap. Runs from self.start_epoch to self.max_epochs (resume-aware).
+        """
         logger.info(
             f"Training on {self.device} | "
             f"epochs={self.max_epochs} | "
@@ -909,24 +921,22 @@ class Trainer:
                 gc.collect(); torch.cuda.empty_cache()
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# Inference — RTX 3070 (8 GB VRAM)
-# ══════════════════════════════════════════════════════════════════════════════
+# Inference
 def load_model_for_inference(
     checkpoint_path: str,
     device: str = "cuda",
     fp16: bool = True,
 ) -> HorizonForecastModel:
     """
-    Load trained checkpoint for local inference on RTX 3070.
+    Load a trained checkpoint for inference.
 
     Memory budget at FP16:
       Model weights:   ~30.1M params × 2 bytes ≈ 60 MB
       Input tensor B=1: (1, 12, 256, 256) @ FP16 = ~1.6 MB
       Activations B=1:  ~400-600 MB (no gradients)
-      Total estimate:   ~700 MB — well within 8 GB VRAM
+      Total estimate:   ~700 MB — runs comfortably on an 8 GB GPU.
 
-    fp16=True  → FP16 inference (fastest on RTX 3070 tensor cores)
+    fp16=True  → FP16 inference (fastest on GPU tensor cores)
     fp16=False → FP32 inference (for debugging numerical issues)
     """
     ckpt  = torch.load(checkpoint_path, map_location=device, weights_only=True)

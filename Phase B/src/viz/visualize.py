@@ -1,12 +1,12 @@
-# src/viz/visualize.py
-# Horizon Forecast — Multi-Panel Forecast Visualization
-# Authors: Or Mordechay Hod, Gilad Boudman  |  Braude College, CODE: 26-1-R-1
-#
-# Generates 4-row dashboard:
-#   Row 0: Input History    (4 IR satellite frames, T-60 to T-15 min)
-#   Row 1: Stage 1 Drivers  (predicted Wind Speed + Temperature)
-#   Row 2: Stage 2 Output   (predicted Cloud Structure + Rain Intensity)
-#   Row 3: Ground Truth     (optional — satellite cloud + IMS rain)
+"""
+Multi-Panel Forecast Visualization.
+
+Generates a 4-row dashboard:
+  Row 0: Input History    (4 IR satellite frames, T-60 to T-15 min)
+  Row 1: Stage 1 Drivers  (predicted Wind Speed + Temperature)
+  Row 2: Stage 2 Output   (predicted Cloud Structure + Rain Intensity)
+  Row 3: Ground Truth     (optional — satellite cloud + IMS rain)
+"""
 
 import math
 from pathlib import Path
@@ -20,7 +20,7 @@ from matplotlib.colors import LinearSegmentedColormap
 
 from src.data.dataset import RAIN_BIN_MID, N_RAIN_BINS
 
-# ── Colormaps ────────────────────────────────────────────────────────────────────
+# Colormaps
 CMAP_CLOUD = "gray_r"
 CMAP_TEMP  = "RdBu_r"
 CMAP_WIND  = "YlOrRd"
@@ -39,6 +39,13 @@ CMAP_RAIN = LinearSegmentedColormap.from_list(
         "#6600cc",              # Class 63: violent (>50 mm/hr)
     ],
     N=N_RAIN_BINS,
+)
+
+# Station-rain colormap: blue (light) -> red (heavy). Used for IMS station rain dots.
+CMAP_STATION_RAIN = LinearSegmentedColormap.from_list(
+    "station_rain",
+    ["#2166ac", "#4393c3", "#92c5de", "#f4a582", "#d6604d", "#b2182b"],
+    N=256,
 )
 
 # Dark theme palette for meteorological contrast
@@ -134,6 +141,39 @@ def _scatter_stations(
         )
 
 
+def _scatter_station_rain(
+    ax: plt.Axes,
+    station_pixels: Optional[List[Tuple[int, int]]],
+    rain_field: np.ndarray,
+    vmax: float,
+):
+    """Plot IMS stations as points colored by rain amount (blue=light -> red=heavy).
+
+    Each station = small red center dot (location marker) + a larger halo whose
+    color encodes the rain value sampled at that station pixel. Dry stations show
+    as small faint blue points. Wetter stations grow redder. Returns the halo
+    PathCollection for use as a colorbar mappable (None if no stations)."""
+    if not station_pixels or len(station_pixels) == 0:
+        return None
+    rows = np.array([p[0] for p in station_pixels])
+    cols = np.array([p[1] for p in station_pixels])
+    h, w = rain_field.shape[-2:]
+    rows = np.clip(rows, 0, h - 1)
+    cols = np.clip(cols, 0, w - 1)
+    vals = rain_field[rows, cols].astype(float)
+
+    vmax = max(float(vmax), 0.5)
+    # Halo size grows mildly with rain so heavy stations read bigger too.
+    sizes = 45.0 + 95.0 * np.clip(vals / vmax, 0.0, 1.0)
+    halo = ax.scatter(
+        cols, rows, c=vals, cmap=CMAP_STATION_RAIN, vmin=0.0, vmax=vmax,
+        s=sizes, alpha=0.92, linewidths=0.5, edgecolors="black", zorder=6,
+    )
+    # Small red center dot marking the station location.
+    ax.scatter(cols, rows, c="#ff1a1a", s=5, marker="o", zorder=7, linewidths=0)
+    return halo
+
+
 def visualize_forecast(
     x_stacked:      torch.Tensor,            # (12, H, W) or (1, 12, H, W)
     pred_wind:      torch.Tensor,            # (H, W) or (1, H, W) — denormalized m/s
@@ -152,15 +192,10 @@ def visualize_forecast(
     Generate 4-row Horizon Forecast dashboard.
 
     Panel layout:
-    ┌────────────────────────────────────────────────────────┐
-    │ Row 0: Input History — 4 IR frames (T-60 to T-15 min)  │
-    ├────────────────────────────────────────────────────────┤
-    │ Row 1: Stage 1 — Wind Speed (m/s) | Temperature (°C)   │
-    ├────────────────────────────────────────────────────────┤
-    │ Row 2: Stage 2 — Cloud T+15min    | Rain T+15min        │
-    ├────────────────────────────────────────────────────────┤
-    │ Row 3: Ground Truth (optional) — Satellite | IMS Rain   │
-    └────────────────────────────────────────────────────────┘
+      Row 0: Input History — 4 IR frames (T-60 to T-15 min)
+      Row 1: Stage 1 — Wind Speed (m/s) | Temperature (°C)
+      Row 2: Stage 2 — Cloud T+15min    | Rain T+15min
+      Row 3: Ground Truth (optional) — Satellite | IMS Rain
 
     Station locations shown as red triangle markers where applicable.
     Rain maps use log-scale colormap to reveal both light and extreme events.
@@ -178,7 +213,7 @@ def visualize_forecast(
         title_suffix:  Timestamp string appended to figure title
         save_path:     If provided, save figure to this path at 150 DPI
     """
-    # ── Prepare numpy arrays ─────────────────────────────────────────────────
+    # Prepare numpy arrays
     x_np    = _prep(x_stacked)                                               # (12,H,W)
     w_np    = _prep(pred_wind)
     t_np    = _prep(pred_temp)
@@ -225,7 +260,7 @@ def visualize_forecast(
             wspace=0.06,
         )
 
-    # ── Row 0: Input History (4 IR frames) ───────────────────────────────────
+    # Row 0: Input History (4 IR frames)
     T_IN      = 4
     gs0       = _make_gs(0, T_IN)
     ir_frames = [x_np[t * 3] for t in range(T_IN)]  # channel 0 = IR per 3-ch block
@@ -237,14 +272,13 @@ def visualize_forecast(
         ax = fig.add_subplot(gs0[0, i])
         im = ax.imshow(frame, cmap=CMAP_CLOUD, vmin=vmin_ir, vmax=vmax_ir,
                        origin="upper", aspect=2.5)
-        _overlay_dem(ax, dem_np, alpha=0.22)
         _draw_coastline(ax, dem_raw)
         _scatter_stations(ax, station_pixels, size=10)
         _style_ax(ax, f"IR Satellite  {lbl}")
         if i == T_IN - 1:
             _add_colorbar(fig, im, ax, "BT (norm.)")
 
-    # ── Row 1: Stage 1 — Thermodynamic Drivers ───────────────────────────────
+    # Row 1: Stage 1 — Thermodynamic Drivers
     gs1  = _make_gs(1, 2)
 
     ax_w = fig.add_subplot(gs1[0, 0])
@@ -263,14 +297,13 @@ def visualize_forecast(
     _scatter_stations(ax_t, station_pixels)
     _add_colorbar(fig, im_t, ax_t, "°C")
 
-    # ── Row 2: Stage 2 — Storm Manifestation ─────────────────────────────────
+    # Row 2: Stage 2 — Storm Manifestation
     gs2       = _make_gs(2, 2)
     rain_vmax = max(float(r_np.max()), 1.0)
 
     ax_c = fig.add_subplot(gs2[0, 0])
     im_c = ax_c.imshow(c_np, cmap=CMAP_CLOUD, vmin=vmin_ir, vmax=vmax_ir,
                        origin="upper", aspect=2.5)
-    _overlay_dem(ax_c, dem_np, alpha=0.22)
     _draw_coastline(ax_c, dem_raw)
     _scatter_stations(ax_c, station_pixels, size=14)
     _style_ax(ax_c, "Stage 2  →  Cloud Structure  T+15 min")
@@ -279,30 +312,27 @@ def visualize_forecast(
     ax_r = fig.add_subplot(gs2[0, 1])
     im_r = ax_r.imshow(r_np, cmap=CMAP_RAIN, vmin=0, vmax=rain_vmax,
                        origin="upper", aspect=2.5)
-    _overlay_dem(ax_r, dem_np, alpha=0.25)
     _draw_coastline(ax_r, dem_raw)
-    _style_ax(ax_r, "Stage 2  →  Rain Intensity  T+15 min")
     _scatter_stations(ax_r, station_pixels)
+    _style_ax(ax_r, "Stage 2  →  Rain Intensity  T+15 min")
     _add_colorbar(fig, im_r, ax_r, "mm/hr")
 
-    # ── Row 3: Ground Truth (optional) ───────────────────────────────────────
+    # Row 3: Ground Truth (optional)
     if has_gt:
         gs3 = _make_gs(3, 3)  # 3 panels: GT cloud | GT cloud + pred rain overlay | GT rain
 
         ax_gc = fig.add_subplot(gs3[0, 0])
         im_gc = ax_gc.imshow(gt_c, cmap=CMAP_CLOUD, vmin=vmin_ir, vmax=vmax_ir,
                               origin="upper", aspect=2.5)
-        _overlay_dem(ax_gc, dem_np, alpha=0.22)
         _draw_coastline(ax_gc, dem_raw)
         _scatter_stations(ax_gc, station_pixels, size=14)
         _style_ax(ax_gc, "Ground Truth  →  Satellite Cloud")
         _add_colorbar(fig, im_gc, ax_gc, "BT (norm.)")
 
-        # ── GT cloud + predicted rain overlay — for human visual comparison ───
+        # GT cloud + predicted rain overlay — for human visual comparison
         ax_ov = fig.add_subplot(gs3[0, 1])
         ax_ov.imshow(gt_c, cmap=CMAP_CLOUD, vmin=vmin_ir, vmax=vmax_ir,
                      origin="upper", aspect=2.5)
-        _overlay_dem(ax_ov, dem_np, alpha=0.15)
         _draw_coastline(ax_ov, dem_raw)
         rain_mask = r_np > 1.0  # only show pixels with predicted rain > 1 mm/hr
         if rain_mask.any():
@@ -315,17 +345,17 @@ def visualize_forecast(
 
         if gt_r is not None:
             ax_gr = fig.add_subplot(gs3[0, 2])
-            im_gr = ax_gr.imshow(gt_r, cmap=CMAP_RAIN, vmin=0, vmax=rain_vmax,
-                                  origin="upper", aspect=2.5)
-            _overlay_dem(ax_gr, dem_np, alpha=0.25)
+            ax_gr.imshow(gt_c, cmap=CMAP_CLOUD, vmin=vmin_ir, vmax=vmax_ir,
+                         origin="upper", aspect=2.5, alpha=0.55)
             _draw_coastline(ax_gr, dem_raw)
+            halo = _scatter_station_rain(ax_gr, station_pixels, gt_r, rain_vmax)
             _style_ax(ax_gr, "Ground Truth  →  IMS Rain (Station Points)")
-            _scatter_stations(ax_gr, station_pixels)
-            _add_colorbar(fig, im_gr, ax_gr, "mm/hr")
+            if halo is not None:
+                _add_colorbar(fig, halo, ax_gr, "mm/hr")
 
-    # ── Title ─────────────────────────────────────────────────────────────────
+    # Title
     fig.suptitle(
-        f"Horizon Forecast  ·  Cascaded Dual-Supervision Nowcast  {title_suffix}",
+        f"Horizon Forecast  ·  Driver-First Cascade Nowcast  {title_suffix}",
         color=_TEXT, fontsize=13, y=0.995, fontweight="bold",
     )
 
@@ -385,12 +415,11 @@ def visualize_rollout(
     if n_rows == 1:
         axes = axes[np.newaxis, :]  # ensure 2D indexing
 
-    # Consistent IR range across all steps — anchored to real satellite values only.
-    # Using pred_ir for range would let model outliers skew colorscale (e.g. T+15
-    # pred all-white while T+30 looks normal). Real IR defines the expected BT range.
-    true_ir_arrays = [sd["true_ir"].numpy() for sd in steps_data]
-    vmin_ir = float(min(a.min() for a in true_ir_arrays))
-    vmax_ir = float(max(a.max() for a in true_ir_arrays))
+    # IR range is computed PER ROW (per step) from that row's real IR, so each row
+    # uses its full contrast range instead of one global scale. A global scale made
+    # bright/low-contrast steps (e.g. T+15) look washed-out gray while colder steps
+    # (T+30) looked rich. Per-row keeps every row visually consistent in style.
+    # Pred and real in the same row share the row's scale so they stay comparable.
 
     all_rain_mm = [RAIN_BIN_MID[sd["pred_rain_cls"].numpy().astype(int)] for sd in steps_data]
     rain_vmax = max(float(a.max()) for a in all_rain_mm) if all_rain_mm else 1.0
@@ -407,11 +436,16 @@ def visualize_rollout(
         pred_rain = RAIN_BIN_MID[sd["pred_rain_cls"].numpy().astype(int)]
         true_rain = RAIN_BIN_MID[sd["true_rain_cls"].numpy().astype(int)]
 
+        # Per-row IR scale from this step's real IR (full contrast, no global washout).
+        vmin_ir = float(true_ir.min())
+        vmax_ir = float(true_ir.max())
+        if vmax_ir - vmin_ir < 1e-6:
+            vmax_ir = vmin_ir + 1e-6
+
         # [0] Predicted IR
         ax = axes[i, 0]
         im = ax.imshow(pred_ir, cmap=CMAP_CLOUD, vmin=vmin_ir, vmax=vmax_ir,
                        origin="upper", aspect=2.5)
-        _overlay_dem(ax, dem_np, alpha=0.22)
         _draw_coastline(ax, dem_raw)
         _scatter_stations(ax, station_pixels, size=10)
         _style_ax(ax, f"T+{lead_min}min  Pred IR")
@@ -423,16 +457,14 @@ def visualize_rollout(
         ax = axes[i, 1]
         ax.imshow(true_ir, cmap=CMAP_CLOUD, vmin=vmin_ir, vmax=vmax_ir,
                   origin="upper", aspect=2.5)
-        _overlay_dem(ax, dem_np, alpha=0.22)
         _draw_coastline(ax, dem_raw)
         _scatter_stations(ax, station_pixels, size=10)
         _style_ax(ax, f"T+{lead_min}min  Real IR")
 
-        # [2] Predicted Rain
+        # [2] Predicted Rain (dense model field)
         ax = axes[i, 2]
         ax.imshow(pred_rain, cmap=CMAP_RAIN, vmin=0, vmax=rain_vmax,
                   origin="upper", aspect=2.5)
-        _overlay_dem(ax, dem_np, alpha=0.25)
         _draw_coastline(ax, dem_raw)
         _scatter_stations(ax, station_pixels)
         _style_ax(ax, f"T+{lead_min}min  Pred Rain")
@@ -440,13 +472,12 @@ def visualize_rollout(
             spine.set_edgecolor(border_c)
             spine.set_linewidth(2.0)
 
-        # [3] Real Rain
+        # [3] Real Rain (IMS stations as blue->red dots over faint IR backdrop)
         ax = axes[i, 3]
-        ax.imshow(true_rain, cmap=CMAP_RAIN, vmin=0, vmax=rain_vmax,
-                  origin="upper", aspect=2.5)
-        _overlay_dem(ax, dem_np, alpha=0.25)
+        ax.imshow(true_ir, cmap=CMAP_CLOUD, vmin=vmin_ir, vmax=vmax_ir,
+                  origin="upper", aspect=2.5, alpha=0.5)
         _draw_coastline(ax, dem_raw)
-        _scatter_stations(ax, station_pixels)
+        _scatter_station_rain(ax, station_pixels, true_rain, rain_vmax)
         _style_ax(ax, f"T+{lead_min}min  Real Rain")
 
         # [4] SSIM bar

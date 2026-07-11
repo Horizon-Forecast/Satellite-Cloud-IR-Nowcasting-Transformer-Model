@@ -1,10 +1,10 @@
-# src/models/model.py
-# Horizon Forecast — Cascaded Dual-Supervision Architecture (Phase C)
-# Authors: Or Mordechay Hod, Gilad Boudman  |  Braude College, CODE: 26-1-R-1
-#
-# Architecture: SimVPv2 Encoder (gSTA) → Stage 1 Physics Head → Stage 2 Manifestation Head
-# Input:  (B, 12, 256, 256)  — 4 stacked frames × 3 channels (IR, WV, DEM)
-# Output: wind+temp (B,2,256,256) | cloud (B,1,256,256) | rain logits (B,64,256,256)
+"""
+Driver-First Cascade Architecture (Phase B).
+
+SimVPv2 Encoder (gSTA) → Stage 1 Physics Head → Stage 2 Manifestation Head.
+Input:  (B, 12, 256, 256)  — 4 stacked frames × 3 channels (IR, WV, DEM)
+Output: wind+temp (B,2,256,256) | cloud (B,1,256,256) | rain logits (B,64,256,256)
+"""
 
 import math
 from typing import Optional, Tuple
@@ -17,14 +17,12 @@ import torch.utils.checkpoint as cp
 # Gradient checkpointing toggle. Set False to disable (single-step, smaller rollout).
 # When True, gSTA blocks + decoders recompute forward during backward, saving ~70%
 # activation memory at cost of ~30% training throughput. Required to fit rollout >= 4
-# on 24 GB A5000 with bf16. State-dict compatible with non-checkpointed weights —
+# on a 24 GB GPU with bf16. State-dict compatible with non-checkpointed weights —
 # pure forward-pass behavior change, no parameter rename.
 USE_GRAD_CKPT = True
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# 1. gSTA Block — Gated Spatiotemporal Attention (SimVPv2 core module)
-# ══════════════════════════════════════════════════════════════════════════════
+# gSTA Block — Gated Spatiotemporal Attention (SimVPv2 core module)
 class gSTABlock(nn.Module):
     """
     Gated Spatiotemporal Attention block from SimVPv2 (§2.2, §6.2 of project doc).
@@ -80,16 +78,14 @@ class gSTABlock(nn.Module):
         return x
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# 2. SimVPv2 Encoder — Visual Body
-# ══════════════════════════════════════════════════════════════════════════════
+# SimVPv2 Encoder — Visual Body
 class SimVPv2Encoder(nn.Module):
     """
     Spatiotemporal feature extractor (§6.2 of project doc).
 
     Processes the 4D stacked-image tensor. The temporal dimension is encoded
     in channels (C_stacked=12), not as a separate video dimension — this is
-    a strict architectural choice for Phase B/C.
+    a strict architectural choice for Phase B.
 
     Pipeline:
       Stem: 256×256 → 64×64  (2× stride-2 conv, 4× spatial compression)
@@ -138,9 +134,7 @@ class SimVPv2Encoder(nn.Module):
         return z
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# 3. Stage 1 — Physics Driver Head + Masked MSE Loss
-# ══════════════════════════════════════════════════════════════════════════════
+# Stage 1 — Physics Driver Head + Masked MSE Loss
 class PhysicsDriverHead(nn.Module):
     """
     Stage 1 cascade: predicts thermodynamic atmospheric drivers (§6.3).
@@ -150,14 +144,17 @@ class PhysicsDriverHead(nn.Module):
               channel 0: Surface Wind Speed (m/s, normalized)
               channel 1: Surface Temperature (°C, normalized)
 
-    Sparse Supervision Strategy:
-      Ground truth exists only at ~60-80 IMS station pixels per 256×256 frame.
-      MaskedMSELoss ensures gradients flow ONLY from those pixels.
-      Convolutional diffusion naturally interpolates between stations —
-      the CNN fills the map via learned spatial priors.
+    Supervision Strategy:
+      Phase A (sparse): ground truth only at ~96 IMS station pixels per frame;
+        MaskedMSELoss flows gradients ONLY from those pixels and the CNN
+        interpolates between stations via learned spatial priors.
+      Phase B (dense, this work): when an ERA5 reanalysis grid is supplied,
+        the head is supervised on the FULL 256×256 field (dense MSE). This cut
+        driver field error ~30× and is the core Phase B contribution — see
+        train.py HorizonLoss (era5_dense branch).
 
     Architecture is deliberately shallow (4 gSTA + decoder) to avoid
-    overfitting sparse IMS supervision.
+    overfitting the sparse-supervision regime.
     """
 
     def __init__(self, latent_dim: int = 256, n_blocks: int = 4):
@@ -219,9 +216,7 @@ class MaskedMSELoss(nn.Module):
         return ((pred - target).pow(2) * m).sum() / n
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# 4. Stage 2 — Manifestation Head (SaTformer-Inspired)
-# ══════════════════════════════════════════════════════════════════════════════
+# Stage 2 — Manifestation Head (SaTformer-Inspired)
 class _SpatialTransformerBlock(nn.Module):
     """
     Transformer block for global storm cluster detection (§2.3, §6.5).
@@ -297,7 +292,7 @@ class ManifestationHead(nn.Module):
             nn.GroupNorm(8, latent_dim),
         )
 
-        # Cascade fusion: [Z; proj_drivers] → single latent
+        # Cascade fusion: [Z, proj_drivers] → single latent
         self.fusion = nn.Sequential(
             nn.Conv2d(latent_dim * 2, latent_dim, 1, bias=False),
             nn.GroupNorm(8, latent_dim),
@@ -384,17 +379,15 @@ class ManifestationHead(nn.Module):
             feat = cp.checkpoint(self.upsample, fused, use_reentrant=False)
         else:
             feat = self.upsample(fused)         # (B, 64, 256, 256)
-        y_cloud = self.cloud_head(feat)         # (B, 1, 256, 256)
+        y_cloud = self.cloud_head(feat)         # (B, 2, 256, 256)  IR+WV
         y_rain  = self.rain_head(feat)          # (B, 64, 256, 256)
         return y_cloud, y_rain
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# 5. Full Horizon Forecast Model
-# ══════════════════════════════════════════════════════════════════════════════
+# Full Horizon Forecast Model
 class HorizonForecastModel(nn.Module):
     """
-    Horizon Forecast: Cascaded Dual-Supervision Network.
+    Horizon Forecast: Driver-First Cascade Network.
     CODE: 26-1-R-1  |  Braude College of Engineering, Software Engineering Dept.
 
     Full forward pass:
