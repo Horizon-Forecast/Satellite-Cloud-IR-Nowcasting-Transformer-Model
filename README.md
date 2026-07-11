@@ -125,7 +125,20 @@ python entry_point.py --era5-path data/era5_npy --resume-ckpt checkpoints/phase1
 - **Standalone offline viewer:** `Phase B/demo/dist/HorizonForecastDemo.exe` — a self-contained
   Windows executable (no Python, no GPU) that steps through curated test cases, comparing the
   Driver-First Cascade against the ablation across every lead time.
-- **Narrated walkthrough video:** [`Phase B/demo/video/Demo_Video.mp4`](Phase%20B/demo/video/Demo_Video.mp4).
+
+<p align="center">
+  <video
+    src="https://github.com/Horizon-Forecast/Satellite-Cloud-IR-Nowcasting-Transformer-Model/raw/main/Phase%20B/demo/video/Demo_Video.mp4"
+    controls
+    width="720">
+  </video>
+</p>
+
+If the player does not appear, [open the video directly](Phase%20B/demo/video/Demo_Video.mp4).
+
+**Standalone offline viewer:** `Phase B/demo/dist/HorizonForecastDemo.exe` — a self-contained
+Windows executable (no Python, no GPU) that steps through curated test cases, comparing the
+Driver-First Cascade against the ablation across every lead time.
 
 ## Research question
 
